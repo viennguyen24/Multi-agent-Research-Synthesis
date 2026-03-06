@@ -1,26 +1,33 @@
-from langchain_core.messages import SystemMessage, HumanMessage
-
 from src.state import ResearchState
 from src.llm import get_llm
 from src.util import AGENT_ROLES, MAX_ITERATIONS
 
 
-def _call_llm(role: str, user_prompt: str) -> str:
+def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
     """Invoke the LLM with a role system prompt and return the response text."""
+    import time
     print(f"  -> requesting {role}...", flush=True)
-    llm = get_llm()
-    response = llm.invoke([
-        SystemMessage(content=AGENT_ROLES[role]),
-        HumanMessage(content=user_prompt),
-    ])
-    print(f"  OK {role} responded ({len(response.content)} chars)", flush=True)
-    return response.content
+    messages = [
+        {"role": "system", "content": AGENT_ROLES[role]},
+        {"role": "user", "content": user_prompt},
+    ]
+    for attempt in range(max_retries):
+        try:
+            llm = get_llm()
+            response_text = llm.complete(messages)
+            print(f"  OK {role} responded ({len(response_text)} chars)", flush=True)
+            return response_text
+        except Exception as e:
+            print(f"  [!] LLM connection error on attempt {attempt + 1}/{max_retries}: {e}")
+            if attempt == max_retries - 1:
+                raise RuntimeError(f"Failed to get LLM response after {max_retries} attempts.") from e
+            # Sleep before retrying to give the network/API time to recover
+            time.sleep(2 ** attempt)
 
 
 def lead_researcher_node(state: ResearchState) -> dict:
     iteration = state.get("iteration", 0)
 
-    # why: first pass creates the plan, subsequent passes evaluate draft+critique
     if iteration == 0:
         prompt = f"Research query:\n{state['query']}\n\nProduce a structured research plan."
         plan = _call_llm("lead_researcher", prompt)

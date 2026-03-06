@@ -3,10 +3,8 @@ from langgraph.graph import StateGraph, END
 from src.state import ResearchState
 from src.agents import lead_researcher_node, editor_node, critic_node
 
-
 def _route_after_lead(state: ResearchState) -> str:
     return state["next"]
-
 
 def build_graph():
     graph = StateGraph(ResearchState)

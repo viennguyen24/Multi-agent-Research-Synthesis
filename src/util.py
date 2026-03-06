@@ -1,6 +1,5 @@
-# For now, only free models on OpenRouter
-# To use OpenRouter provider, add ':free' postfix
 MODELS = [
+    "qwen3.5:397b",
     "meta-llama/llama-3.2-3b-instruct",
     "meta-llama/llama-3.3-70b-instruct",
     "openai/gpt-oss-20b",
@@ -9,9 +8,7 @@ MODELS = [
     "google/gemma-3n-e4b-it",
 ]
 
-DEFAULT_MODEL = "meta-llama/llama-3.2-3b-instruct"
-
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_MODEL = MODELS[0]
 
 MAX_ITERATIONS = 2
 
