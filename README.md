@@ -18,25 +18,29 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 3. API key
+### 3. API keys
 
 ```bash
 copy .env.sample .env
 ```
 
-Edit `.env` — replace `your_key_here` with your OpenRouter API key from https://openrouter.ai/keys
+Edit `.env` — replace the placeholder values with your OpenRouter API key (from https://openrouter.ai/keys) and Ollama API key (from https://ollama.com/settings/keys).
 
 ### 4. (Optional) Change model
 
-Edit `DEFAULT_MODEL` in `src/util.py`. Use any model string from https://openrouter.ai/models
+Edit `DEFAULT_MODEL` in `src/util.py`. Use any model string from https://openrouter.ai/models or Ollama.
 
 ## Run
 
 ```bash
-python main.py
+# To use Ollama Cloud (default):
+python main.py --ollama
+
+# To use OpenRouter:
+python main.py --open-router
 ```
 
-Change the research query by editing `DEFAULT_QUERY` in `main.py`.
+You can change the research query by adding `--query "Your question here"` or editing `DEFAULT_QUERY` in `main.py`.
 
 ## Graph Flow
 
