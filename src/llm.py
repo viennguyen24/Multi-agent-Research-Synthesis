@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from dotenv import load_dotenv
+from openai import OpenAI
+from ollama import Client
 
 from src.util import DEFAULT_MODEL
 
@@ -15,9 +17,10 @@ class Provider(str, Enum):
     OPENROUTER = "openrouter"
     OLLAMA     = "ollama"
 
+# For now we will use provider, model, base url and api key fields. Other fields will be updated once a need is found
 @dataclass
 class LLMConfig:
-    provider: Provider | str = Provider.OPENROUTER
+    provider: Provider | str = Provider.OLLAMA
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
@@ -30,14 +33,13 @@ class LLMConfig:
             return self.api_key
         key = os.environ.get(env_var)
         if not key:
-            raise EnvironmentError(f"Missing API key: set LLMConfig.api_key or ${env_var}")
+            raise EnvironmentError(f"Missing API key: set LLMConfig.api_key or {env_var}")
         return key
 
 
 
 class OpenRouterLLM:
     def __init__(self, config: LLMConfig):
-        from openai import OpenAI
         self.config = config
         self._client = OpenAI(
             api_key=config.resolved_api_key("OPENROUTER_API_KEY"),
@@ -62,7 +64,6 @@ class OpenRouterLLM:
 
 class OllamaLLM:
     def __init__(self, config: LLMConfig):
-        from ollama import Client
         self.config = config
         api_key = config.resolved_api_key("OLLAMA_API_KEY")
         self._client = Client(
@@ -75,6 +76,10 @@ class OllamaLLM:
         temp = kwargs.get("temperature", self.config.temperature)
         if temp is not None:
             options["temperature"] = temp
+
+        mt = kwargs.get("max_tokens", self.config.max_tokens)
+        if mt is not None:
+            options["num_predict"] = mt
 
         req_params = {
             "model": self.config.model,

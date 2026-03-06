@@ -7,9 +7,10 @@ DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
 
 def main():
     parser = argparse.ArgumentParser(description="Run the research synthesis agent.")
-    parser.add_argument("--open-router", action="store_true", help="Use OpenRouter provider")
-    parser.add_argument("--ollama", action="store_true", help="Use Ollama Cloud provider (default)")
-    parser.add_argument("--query", type=str, default=DEFAULT_QUERY, help="Research query")
+    provider_group = parser.add_mutually_exclusive_group()
+    provider_group.add_argument("--open-router", action="store_true", help="Use OpenRouter provider")
+    provider_group.add_argument("--ollama", action="store_true", help="Use Ollama Cloud provider (default)")
+    parser.add_argument("--query", type=str, default=None, help="Research query")
     args = parser.parse_args()
 
     if args.open_router:
@@ -20,7 +21,7 @@ def main():
     graph = build_graph()
 
     result = graph.invoke({
-        "query": args.query,
+        "query": args.query or DEFAULT_QUERY,
         "plan": "",
         "draft": "",
         "critique": "",

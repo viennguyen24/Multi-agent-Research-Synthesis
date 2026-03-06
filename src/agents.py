@@ -1,11 +1,11 @@
+import time
+
 from src.state import ResearchState
 from src.llm import get_llm
 from src.util import AGENT_ROLES, MAX_ITERATIONS
 
 
 def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
-    """Invoke the LLM with a role system prompt and return the response text."""
-    import time
     print(f"  -> requesting {role}...", flush=True)
     messages = [
         {"role": "system", "content": AGENT_ROLES[role]},
