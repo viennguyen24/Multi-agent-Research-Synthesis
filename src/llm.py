@@ -4,14 +4,25 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TypeVar
 from dotenv import load_dotenv
 from openai import OpenAI
 from ollama import Client
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
+import re
 
 from src.util import DEFAULT_MODEL
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=str(_PROJECT_ROOT / ".env"))
+
+def _strip_think_block(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models (e.g. qwen3).
+    Also strips any leading/trailing whitespace so the remainder is clean JSON.
+    """
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 class Provider(str, Enum):
     OPENROUTER = "openrouter"
@@ -46,7 +57,7 @@ class OpenRouterLLM:
             base_url=config.base_url,
         )
 
-    def complete(self, messages: list[dict], **kwargs) -> str:
+    def complete(self, messages: list[dict], schema: type[T] | None = None, strip_think: bool = True, **kwargs) -> str | T:
         req_params = {
             "model": self.config.model,
             "messages": messages,
@@ -59,8 +70,12 @@ class OpenRouterLLM:
         if mt is not None:
             req_params["max_tokens"] = mt
 
+        if schema is not None:
+            raise NotImplementedError("Structured output not yet supported for OpenRouter")
+
         resp = self._client.chat.completions.create(**req_params)
-        return resp.choices[0].message.content
+        raw = resp.choices[0].message.content
+        return _strip_think_block(raw) if strip_think else raw
 
 class OllamaLLM:
     def __init__(self, config: LLMConfig):
@@ -71,7 +86,8 @@ class OllamaLLM:
             headers={'Authorization': f'Bearer {api_key}'}
         )
 
-    def complete(self, messages: list[dict], **kwargs) -> str:
+    def complete(self, messages: list[dict], schema: type[T] | None = None, strip_think: bool = True, **kwargs) -> str | T:
+        """Invoke Ollama chat. If schema is provided, constrain output to JSON schema."""
         options = {}
         temp = kwargs.get("temperature", self.config.temperature)
         if temp is not None:
@@ -89,8 +105,15 @@ class OllamaLLM:
         if options:
             req_params["options"] = options
 
+        if schema is not None:
+            req_params["format"] = schema.model_json_schema()
+
         resp = self._client.chat(**req_params)
-        return resp["message"]["content"]
+        raw_content = _strip_think_block(resp.message.content) if strip_think else resp.message.content
+        print(raw_content)
+        if schema is not None:
+            return schema.model_validate_json(raw_content)
+        return raw_content
 
 _PROVIDERS: dict[Provider, dict] = {
     Provider.OPENROUTER: {
