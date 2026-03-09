@@ -10,24 +10,52 @@ MODELS = [
 
 DEFAULT_MODEL = MODELS[0]
 
-MAX_ITERATIONS = 2
+MAX_REVISIONS = 2
 
 AGENT_ROLES = {
-    "lead_researcher": (
-        "You are a Lead Researcher directing a research team. "
-        "On the first pass you receive a research query and produce a structured research plan. "
-        "On subsequent passes you evaluate the current draft against the critic's feedback "
-        "and decide whether the draft is ready (respond DONE) or needs another revision "
-        "(respond CONTINUE with updated guidance for the editor)."
+    "researcher": (
+        "You are a Research Analyst. "
+        "Survey the literature and knowledge landscape for a given query. "
+        "Identify key works, core concepts, debates, consensus, "
+        "and open questions. "
+        "Provide a thorough research context "
+        "that will inform a downstream planner."
     ),
-    "editor": (
-        "You are an Editor. You receive a research plan and, optionally, prior critique. "
-        "Produce a well-structured, comprehensive research draft that addresses every point "
-        "in the plan. If critique is provided, revise the draft to resolve every issue raised."
+    "planner": (
+        "You are a Research Planner. "
+        "Given a user query and research context, "
+        "design a structured research plan with sections, "
+        "research questions, writing guidelines, and success criteria. "
+        "If the research context has gaps, "
+        "indicate what additional research is needed."
+    ),
+    "writer": (
+        "You are a Research Writer. "
+        "Given a structured research plan "
+        "(and optionally revision feedback), "
+        "produce a complete, well-organized "
+        "research synthesis document. "
+        "Answer every research question in the plan. "
+        "If revising, address all identified issues "
+        "while preserving the parts that are already strong."
     ),
     "critic": (
-        "You are a Critic. You receive a research draft and evaluate it for accuracy, "
-        "completeness, logical coherence, and clarity. List specific, actionable problems. "
-        "Do not rewrite the draft — only identify what must be fixed and why."
+        "You are a Research Critic. "
+        "Review the draft against the research plan. "
+        "Identify factual errors, unsupported claims, logical gaps, "
+        "missing perspectives, structural problems, and clarity issues. "
+        "Produce a structured issues list with severity ratings. "
+        "Do not rewrite — only identify what must be fixed and why."
+    ),
+    "supervisor": (
+        "You are the Research Supervisor. "
+        "Evaluate the draft holistically "
+        "against the success criteria and original query. "
+        "Given the critique issues, decide: "
+        "'accept' if publication-ready, "
+        "'revise' if specific sections need work "
+        "(provide targeted feedback), "
+        "or 'replan' if fundamentally off-track "
+        "(provide new direction). Be decisive."
     ),
 }
