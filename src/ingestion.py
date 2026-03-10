@@ -248,13 +248,8 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> dict[str, Any]:
     _validate_references(markdown_text=markdown_text, manifest=manifest)
 
     return {
-        "doc_id": doc_id,
-        "artifact_root": str(artifact_root),
-        "markdown_path": str(markdown_path),
-        "manifest_path": str(manifest_path),
-        "equations_path": str(equations_path),
-        "manifest_json": manifest,
         "source_markdown": markdown_text,
+        "manifest_json": manifest,
         "image_count": len(images),
         "table_count": len(tables),
         "equation_count": len(equations),
