@@ -12,6 +12,7 @@ MODELS = [
 DEFAULT_MODEL = MODELS[0]
 
 MAX_REVISIONS = 2
+RETRY_LLM = 2
 
 AGENT_ROLES = {
     "researcher": (

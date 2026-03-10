@@ -10,6 +10,7 @@ from openai import OpenAI
 from ollama import Client
 from google import genai
 from pydantic import BaseModel
+from google.genai import types
 
 T = TypeVar("T", bound=BaseModel)
 import re
@@ -112,7 +113,6 @@ class OllamaLLM:
 
         resp = self._client.chat(**req_params)
         raw_content = _strip_think_block(resp.message.content) if strip_think else resp.message.content
-        print(raw_content)
         if schema is not None:
             return schema.model_validate_json(raw_content)
         return raw_content
@@ -127,28 +127,46 @@ class GeminiLLM:
         )
 
     def complete(self, messages: list[dict], schema: type[T] | None = None, **kwargs) -> str | T:
-        # flatten chat messages into a single prompt string for generate_content
-        contents = "\n".join(
-            f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages
-        )
+        system_instructions = []
+        user_contents = []
 
-        gen_config: dict = {}
+        for m in messages:
+            role = m.get('role', '')
+            content_text = str(m.get('content', ''))
+            
+            if role == 'system':
+                system_instructions.append(content_text)
+            else:
+                # Gemini expects 'model' for assistant, 'user' for user
+                gemini_role = 'model' if role == 'assistant' else 'user'
+                user_contents.append(
+                    types.Content(
+                        role=gemini_role,
+                        parts=[types.Part.from_text(text=content_text)]
+                    )
+                )
+
+        gen_config = types.GenerateContentConfig()
+        
+        if system_instructions:
+            gen_config.system_instruction = "\n".join(system_instructions)
+
         temp = kwargs.get("temperature", self.config.temperature)
         if temp is not None:
-            gen_config["temperature"] = temp
+            gen_config.temperature = temp
 
         mt = kwargs.get("max_tokens", self.config.max_tokens)
         if mt is not None:
-            gen_config["max_output_tokens"] = mt
+            gen_config.max_output_tokens = mt
 
         if schema is not None:
-            gen_config["response_mime_type"] = "application/json"
-            gen_config["response_json_schema"] = schema.model_json_schema()
+            gen_config.response_mime_type = "application/json"
+            gen_config.response_json_schema = schema.model_json_schema()
 
         response = self._client.models.generate_content(
             model=self.config.model,
-            contents=contents,
-            config=gen_config if gen_config else None,
+            contents=user_contents,
+            config=gen_config,
         )
 
         raw_content = response.text

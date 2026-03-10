@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import time
 from typing import Literal
 from uuid import uuid4
 
@@ -21,21 +22,29 @@ from src.state import (
     Revision,
 )
 from src.llm import get_llm
-from src.util import AGENT_ROLES, MAX_REVISIONS
+from src.util import AGENT_ROLES, MAX_REVISIONS, RETRY_LLM
 
 
 def _call_llm(role: str, user_prompt: str, schema: type | None = None):
-    llm = get_llm()
     messages = [
         {"role": "system", "content": AGENT_ROLES[role]},
         {"role": "user", "content": user_prompt},
     ]
     tag = "structured" if schema else "text"
     print(f"  -> requesting {role} ({tag})...", flush=True)
-    result = llm.complete(messages, schema=schema)
-    label = "structured" if schema else f"{len(result)} chars"
-    print(f"  OK {role} responded ({label})", flush=True)
-    return result
+
+    for attempt in range(RETRY_LLM):
+        try:
+            llm = get_llm()
+            result = llm.complete(messages, schema=schema)
+            label = "structured" if schema else f"{len(result)} chars"
+            print(f"  OK {role} responded ({label})", flush=True)
+            return result
+        except Exception as e:
+            print(f"  [!] LLM connection error on attempt {attempt + 1}/{RETRY_LLM}: {e}")
+            if attempt == RETRY_LLM - 1:
+                raise RuntimeError(f"Failed to get LLM response after {RETRY_LLM} attempts.") from e
+            time.sleep(2 ** attempt)
 
 
 def researcher_node(state: ResearchState) -> Command[Literal["planner"]]:
