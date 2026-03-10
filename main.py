@@ -7,16 +7,24 @@ from src.graph import build_graph
 import src.llm
 from src.processing.document import DocProcessor
 from src.processing.document._common import _slugify
+from src.llm import GLOBAL_CONFIG, Provider
 
 DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
 DEFAULT_SOURCE_PDF = "Transformers.pdf"
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the research synthesis agent.")
-    provider_group = parser.add_mutually_exclusive_group()
-    provider_group.add_argument("--open-router", action="store_true", help="Use OpenRouter provider")
-    provider_group.add_argument("--ollama", action="store_true", help="Use Ollama Cloud provider (default)")
-    parser.add_argument("--query", type=str, default=None, help="Research query")
+_PROVIDER_FLAGS = {
+    "ollama":     Provider.OLLAMA,
+    "openrouter": Provider.OPENROUTER,
+    "gemini":     Provider.GOOGLE_AI_STUDIO,
+}
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Multi-agent research synthesis")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--ollama",     action="store_true", help="Use Ollama provider")
+    group.add_argument("--openrouter", action="store_true", help="Use OpenRouter provider")
+    group.add_argument("--gemini",     action="store_true", help="Use Google AI Studio (Gemini) provider (default)")
+    parser.add_argument("--query", type=str, default=DEFAULT_QUERY, help="Research query")
     parser.add_argument(
         "--pdf",
         type=str,
@@ -34,18 +42,24 @@ def main() -> None:
         action="store_true",
         help="Pause after document extraction and require user confirmation to continue",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+
+    # resolve which provider flag was set (fallback Google AI studio)
+    selected = next(
+        (prov for flag, prov in _PROVIDER_FLAGS.items() if getattr(args, flag)),
+        Provider.GOOGLE_AI_STUDIO,
+    )
+    GLOBAL_CONFIG.provider = selected
 
     pdf_path = Path(args.pdf)
     if not pdf_path.exists():
         sys.exit(f"error: PDF not found: {pdf_path}")
     if pdf_path.suffix.lower() != ".pdf":
         sys.exit(f"error: file does not have a .pdf extension: {pdf_path}")
-
-    if args.open_router:
-        src.llm.GLOBAL_CONFIG.provider = "openrouter"
-    else:
-        src.llm.GLOBAL_CONFIG.provider = "ollama"
     
     _t0 = time.perf_counter()
     doc_id = _slugify(pdf_path.stem)
@@ -108,3 +122,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

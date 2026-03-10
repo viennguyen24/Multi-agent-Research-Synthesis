@@ -4,18 +4,32 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TypeVar
 from dotenv import load_dotenv
 from openai import OpenAI
 from ollama import Client
+from google import genai
+from pydantic import BaseModel
+from google.genai import types
+
+T = TypeVar("T", bound=BaseModel)
+import re
 
 from src.util import DEFAULT_MODEL
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=str(_PROJECT_ROOT / ".env"))
 
+def _strip_think_block(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models (e.g. qwen3).
+    Also strips any leading/trailing whitespace so the remainder is clean JSON.
+    """
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
 class Provider(str, Enum):
-    OPENROUTER = "openrouter"
-    OLLAMA     = "ollama"
+    OPENROUTER        = "openrouter"
+    OLLAMA            = "ollama"
+    GOOGLE_AI_STUDIO  = "google_ai_studio"
 
 # For now we will use provider, model, base url and api key fields. Other fields will be updated once a need is found
 @dataclass
@@ -46,7 +60,7 @@ class OpenRouterLLM:
             base_url=config.base_url,
         )
 
-    def complete(self, messages: list[dict], **kwargs) -> str:
+    def complete(self, messages: list[dict], schema: type[T] | None = None, strip_think: bool = True, **kwargs) -> str | T:
         req_params = {
             "model": self.config.model,
             "messages": messages,
@@ -59,8 +73,12 @@ class OpenRouterLLM:
         if mt is not None:
             req_params["max_tokens"] = mt
 
+        if schema is not None:
+            raise NotImplementedError("Structured output not yet supported for OpenRouter")
+
         resp = self._client.chat.completions.create(**req_params)
-        return resp.choices[0].message.content
+        raw = resp.choices[0].message.content
+        return _strip_think_block(raw) if strip_think else raw
 
 class OllamaLLM:
     def __init__(self, config: LLMConfig):
@@ -71,7 +89,8 @@ class OllamaLLM:
             headers={'Authorization': f'Bearer {api_key}'}
         )
 
-    def complete(self, messages: list[dict], **kwargs) -> str:
+    def complete(self, messages: list[dict], schema: type[T] | None = None, strip_think: bool = True, **kwargs) -> str | T:
+        """Invoke Ollama chat. If schema is provided, constrain output to JSON schema."""
         options = {}
         temp = kwargs.get("temperature", self.config.temperature)
         if temp is not None:
@@ -89,8 +108,71 @@ class OllamaLLM:
         if options:
             req_params["options"] = options
 
+        if schema is not None:
+            req_params["format"] = schema.model_json_schema()
+
         resp = self._client.chat(**req_params)
-        return resp["message"]["content"]
+        raw_content = _strip_think_block(resp.message.content) if strip_think else resp.message.content
+        if schema is not None:
+            return schema.model_validate_json(raw_content)
+        return raw_content
+
+class GeminiLLM:
+    """Google AI Studio provider via the google-genai SDK."""
+
+    def __init__(self, config: LLMConfig):
+        self.config = config
+        self._client = genai.Client(
+            api_key=config.resolved_api_key("GOOGLE_AI_STUDIO_API_KEY"),
+        )
+
+    def complete(self, messages: list[dict], schema: type[T] | None = None, **kwargs) -> str | T:
+        system_instructions = []
+        user_contents = []
+
+        for m in messages:
+            role = m.get('role', '')
+            content_text = str(m.get('content', ''))
+            
+            if role == 'system':
+                system_instructions.append(content_text)
+            else:
+                # Gemini expects 'model' for assistant, 'user' for user
+                gemini_role = 'model' if role == 'assistant' else 'user'
+                user_contents.append(
+                    types.Content(
+                        role=gemini_role,
+                        parts=[types.Part.from_text(text=content_text)]
+                    )
+                )
+
+        gen_config = types.GenerateContentConfig()
+        
+        if system_instructions:
+            gen_config.system_instruction = "\n".join(system_instructions)
+
+        temp = kwargs.get("temperature", self.config.temperature)
+        if temp is not None:
+            gen_config.temperature = temp
+
+        mt = kwargs.get("max_tokens", self.config.max_tokens)
+        if mt is not None:
+            gen_config.max_output_tokens = mt
+
+        if schema is not None:
+            gen_config.response_mime_type = "application/json"
+            gen_config.response_json_schema = schema.model_json_schema()
+
+        response = self._client.models.generate_content(
+            model=self.config.model,
+            contents=user_contents,
+            config=gen_config,
+        )
+
+        raw_content = response.text
+        if schema is not None:
+            return schema.model_validate_json(raw_content)
+        return raw_content
 
 _PROVIDERS: dict[Provider, dict] = {
     Provider.OPENROUTER: {
@@ -107,11 +189,17 @@ _PROVIDERS: dict[Provider, dict] = {
             "base_url": os.environ.get("OLLAMA_BASE_URL", "https://ollama.com"),
         }
     },
+    Provider.GOOGLE_AI_STUDIO: {
+        "cls": GeminiLLM,
+        "defaults": {
+            "model": "gemini-2.5-flash-lite",
+        }
+    },
 }
 
 GLOBAL_CONFIG = LLMConfig()
 
-def get_llm(config: LLMConfig | None = None) -> OpenRouterLLM | OllamaLLM:
+def get_llm(config: LLMConfig | None = None) -> OpenRouterLLM | OllamaLLM | GeminiLLM:
     if config is None:
         config = GLOBAL_CONFIG
 
