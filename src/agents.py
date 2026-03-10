@@ -1,8 +1,10 @@
 import time
+import json
 
 from src.state import ResearchState
 from src.llm import get_llm
 from src.util import AGENT_ROLES, MAX_ITERATIONS
+from src.ingestion import extract_multimodal_pdf_artifacts
 
 
 def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
@@ -25,11 +27,53 @@ def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
             time.sleep(2 ** attempt)
 
 
+def _build_document_context(state: ResearchState, markdown_limit: int = 12000) -> str:
+    markdown = state.get("source_markdown", "")
+    markdown_excerpt = markdown[:markdown_limit]
+
+    manifest = state.get("manifest_json", {}) or {}
+    manifest_summary = {
+        "doc_id": manifest.get("doc_id"),
+        "markdown_path": manifest.get("markdown_path"),
+        "image_count": len(manifest.get("images", [])),
+        "table_count": len(manifest.get("tables", [])),
+        "equation_count": len(manifest.get("equations", [])),
+        "references_preview": manifest.get("references", [])[:10],
+    }
+
+    return (
+        "Source document context (Markdown excerpt):\n"
+        f"{markdown_excerpt}\n\n"
+        "Artifact manifest summary:\n"
+        f"{json.dumps(manifest_summary, indent=2)}"
+    )
+
+
+def ingest_pdf_node(state: ResearchState) -> dict:
+    artifacts = extract_multimodal_pdf_artifacts(state["source_pdf_path"])
+    message = (
+        "[ingest_pdf] Extracted multimodal artifacts "
+        f"(images={artifacts['image_count']}, tables={artifacts['table_count']}, equations={artifacts['equation_count']})"
+    )
+    return {
+        "artifact_root": artifacts["artifact_root"],
+        "manifest_path": artifacts["manifest_path"],
+        "manifest_json": artifacts["manifest_json"],
+        "source_markdown": artifacts["source_markdown"],
+        "messages": [message],
+    }
+
+
 def lead_researcher_node(state: ResearchState) -> dict:
     iteration = state.get("iteration", 0)
+    document_context = _build_document_context(state)
 
     if iteration == 0:
-        prompt = f"Research query:\n{state['query']}\n\nProduce a structured research plan."
+        prompt = (
+            f"Research query:\n{state['query']}\n\n"
+            f"{document_context}\n\n"
+            "Produce a structured research plan that uses the markdown and referenced artifacts."
+        )
         plan = _call_llm("lead_researcher", prompt)
         return {
             "plan": plan,
@@ -47,6 +91,7 @@ def lead_researcher_node(state: ResearchState) -> dict:
 
     prompt = (
         f"Research query:\n{state['query']}\n\n"
+        f"{document_context}\n\n"
         f"Current draft:\n{state.get('draft', '')}\n\n"
         f"Critic feedback:\n{state.get('critique', '')}\n\n"
         "Evaluate the draft against the critique. "
@@ -71,7 +116,12 @@ def lead_researcher_node(state: ResearchState) -> dict:
 
 
 def editor_node(state: ResearchState) -> dict:
-    prompt = f"Research query:\n{state['query']}\n\nResearch plan / guidance:\n{state.get('plan', '')}\n\n"
+    document_context = _build_document_context(state)
+    prompt = (
+        f"Research query:\n{state['query']}\n\n"
+        f"{document_context}\n\n"
+        f"Research plan / guidance:\n{state.get('plan', '')}\n\n"
+    )
 
     critique = state.get("critique", "")
     if critique:
@@ -92,8 +142,10 @@ def editor_node(state: ResearchState) -> dict:
 
 
 def critic_node(state: ResearchState) -> dict:
+    document_context = _build_document_context(state)
     prompt = (
         f"Research query:\n{state['query']}\n\n"
+        f"{document_context}\n\n"
         f"Draft to review:\n{state.get('draft', '')}\n\n"
         "List specific, actionable problems. Do not rewrite — only identify issues."
     )

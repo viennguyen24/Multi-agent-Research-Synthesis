@@ -3,6 +3,7 @@ from src.graph import build_graph
 import src.llm
 
 DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
+DEFAULT_SOURCE_PDF = "Transformers.pdf"
 
 
 def main():
@@ -22,6 +23,11 @@ def main():
 
     result = graph.invoke({
         "query": args.query or DEFAULT_QUERY,
+        "source_pdf_path": DEFAULT_SOURCE_PDF,
+        "source_markdown": "",
+        "artifact_root": "",
+        "manifest_path": "",
+        "manifest_json": {},
         "plan": "",
         "draft": "",
         "critique": "",
