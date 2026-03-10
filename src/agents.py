@@ -4,7 +4,6 @@ import json
 from src.state import ResearchState
 from src.llm import get_llm
 from src.util import AGENT_ROLES, MAX_ITERATIONS
-from src.ingestion import extract_multimodal_pdf_artifacts
 
 
 def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
@@ -47,21 +46,6 @@ def _build_document_context(state: ResearchState, markdown_limit: int = 12000) -
         "Artifact manifest summary:\n"
         f"{json.dumps(manifest_summary, indent=2)}"
     )
-
-
-def ingest_pdf_node(state: ResearchState) -> dict:
-    artifacts = extract_multimodal_pdf_artifacts(state["source_pdf_path"])
-    message = (
-        "[ingest_pdf] Extracted multimodal artifacts "
-        f"(images={artifacts['image_count']}, tables={artifacts['table_count']}, equations={artifacts['equation_count']})"
-    )
-    return {
-        "artifact_root": artifacts["artifact_root"],
-        "manifest_path": artifacts["manifest_path"],
-        "manifest_json": artifacts["manifest_json"],
-        "source_markdown": artifacts["source_markdown"],
-        "messages": [message],
-    }
 
 
 def lead_researcher_node(state: ResearchState) -> dict:

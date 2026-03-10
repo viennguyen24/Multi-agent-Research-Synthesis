@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ BLOCK_EQUATION_PATTERN = re.compile(r"\$\$(.+?)\$\$", flags=re.DOTALL)
 
 
 def _disable_hf_symlink_usage_on_windows() -> None:
-    """Force huggingface_hub to copy files instead of symlinking on Windows."""
+    """Force huggingface_hub to copy files instead of symlinking on Windows.  You get errors otherwise if you're running on Windows not in admin mode."""
     if os.name != "nt":
         return
 
@@ -155,9 +156,11 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> dict[str, Any]:
     equations_path = artifact_root / "equations.jsonl"
     manifest_path = artifact_root / "manifest.json"
 
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    images_dir.mkdir(parents=True, exist_ok=True)
-    tables_dir.mkdir(parents=True, exist_ok=True)
+    if artifact_root.exists():
+        shutil.rmtree(artifact_root)
+    artifact_root.mkdir(parents=True)
+    images_dir.mkdir(parents=True)
+    tables_dir.mkdir(parents=True)
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.images_scale = 2.0
@@ -173,7 +176,7 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> dict[str, Any]:
     conv_res = converter.convert(source)
     document = conv_res.document
 
-    document.save_as_markdown(markdown_path, image_mode=ImageRefMode.REFERENCED)
+    document.save_as_markdown(markdown_path, image_mode=ImageRefMode.PLACEHOLDER)
     markdown_text = markdown_path.read_text(encoding="utf-8")
 
     images: list[dict[str, Any]] = []

@@ -71,20 +71,11 @@ Agents consume markdown content plus manifest metadata so they can reference tab
 ## Graph Flow
 
 ```
-START → ingest_pdf → lead_researcher
-                          │
-                          ├─ next=="continue" → editor → critic ─┐
-                          │                                       │
-                          └◄──────────────────────────────────────┘
-                          │
-                          └─ next=="done" → END
+START → lead_researcher
+                  │
+                  ├─ next=="continue" → editor → critic ─┐
+                  │                                      │
+                  └◄─────────────────────────────────────┘
+                  │
+                  └─ next=="done" → END
 ```
-
-## Validation checklist
-
-After running, verify:
-
-- `artifacts/transformers/` contains markdown, images, tables, equations, and manifest outputs
-- equations appear in `document.md` and also in `equations.jsonl`
-- markdown tokens resolve through `manifest.json`
-- graph exits through `DONE` or max-iteration path
