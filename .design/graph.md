@@ -4,11 +4,11 @@ See `design_graph.md`
 
 ```
 [ENTRY] → RESEARCHER → PLANNER → WRITER → CRITIC → SUPERVISOR → [END]
-               ↑            ↑               |              |
-               |            |               ↑              |
-               |            └────────── REVISE ────────────┤
-               |                                           |
-               └─────────────────────────── REPLAN ────────┘
+                        ↑            ↑               |
+                        |            |               |
+                        |            └────────── REVISE
+                        |                            |
+                        └──────────────────────── REPLAN
 ```
 
 **Normal path:** Researcher → Planner → Writer → Critic → Supervisor → END
@@ -42,12 +42,12 @@ This agent defines the questions the final output must answer, decide how to str
 - Defines specific research questions each section must answer
 - Establishes writing guidelines: target audience, tone, style, depth
 - Sets explicit success criteria the final output will be evaluated against
-- Routes back to Reseacher if it identifies a genuine knowledge gap or an angle worth exploring.
+- Routes back to Researcher if it identifies a genuine knowledge gap or an angle worth exploring.
 ---
 
 ### Writer
 
-The Writer here is responsible for turning a structured plan into a complete, coherent document, and for improving it when feedback arrives. It answers every single questions listed in the structured reasearch plan, and focuses on getting the in-depth explanation for each questions. Outputs a complete draft document, versioned which will be handed to Critic.
+The Writer here is responsible for turning a structured plan into a complete, coherent document, and for improving it when feedback arrives. It answers every single question listed in the structured reasearch plan, and focuses on getting the in-depth explanation for each questions. Outputs a complete draft document, versioned which will be handed to Critic.
 
 **What it does:**
 
@@ -59,7 +59,7 @@ The Writer here is responsible for turning a structured plan into a complete, co
 
 ### Critic
 
-This agent purely finds problems and outline them to another agent who will plan how to fix them.
+This agent purely finds problems and outlines them for another agent who will plan how to fix them.
 
 **What it does:**
 - Checks every section against the plan's defined research questions — does this section actually answer what it was supposed to?
@@ -72,7 +72,7 @@ This agent purely finds problems and outline them to another agent who will plan
 
 ### Supervisor
 
-The Supervisor is the only agent that sees the whole picture: the original query, the research plan, all draft versions, and the Critic's issues. Its job is but to decide whether the current state is good enough and what the right next step is.
+The Supervisor is the only agent that sees the whole picture: the original query, the research plan, all draft versions, and the Critic's issues. Its job is to decide whether the current state is good enough and what the right next step is.
 
 **What it does:**
 - Evaluates the current draft holistically against the success criteria defined in the plan

@@ -17,7 +17,7 @@ _PROVIDER_FLAGS = {
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Multi-agent research synthesis")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--ollama",     action="store_true", help="Use Ollama provider (default)")
+    group.add_argument("--ollama",     action="store_true", help="Use Ollama provider")
     group.add_argument("--openrouter", action="store_true", help="Use OpenRouter provider")
     group.add_argument("--gemini",     action="store_true", help="Use Google AI Studio (Gemini) provider")
     parser.add_argument("--query", type=str, default=DEFAULT_QUERY, help="Research query")
