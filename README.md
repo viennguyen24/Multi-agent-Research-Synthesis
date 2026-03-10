@@ -27,11 +27,14 @@ Also Docling requires 1.5-2GB for its custom model.
 copy .env.sample .env
 ```
 
-Edit `.env` — replace the placeholder values with your OpenRouter API key (from https://openrouter.ai/keys) and Ollama API key (from https://ollama.com/settings/keys).
+Edit `.env` — replace the placeholder values with your LLM Provider's API key. We have options for
+- [OpenRouter API](https://openrouter.ai/keys) 
+- [Ollama Cloud API](https://ollama.com/settings/keys)
+- [Google AI Studio](https://github.com/google-gemini/cookbook/blob/main/quickstarts/Get_started.ipynb)
 
 ### 4. (Optional) Change model
 
-Edit `DEFAULT_MODEL` in `src/util.py`. Use any model string from https://openrouter.ai/models or Ollama.
+Edit `DEFAULT_MODEL` in `src/util.py`.
 
 ## Run
 
@@ -41,6 +44,9 @@ python main.py --ollama
 
 # To use OpenRouter:
 python main.py --open-router
+
+# To use Google Gemini
+python main.py --gemini
 ```
 
 ### Optional Commandline Arguments
@@ -55,11 +61,8 @@ Adding `--use-db` (or `--skip-processing`) skips the Docling document extraction
 ## Graph Flow
 
 ```
-START → lead_researcher (selects chunk indices)
-                  │
-                  ├─ next=="continue" → editor → critic ─┐
-                  │         (uses selected chunks)        │
-                  └◄─────────────────────────────────────┘
-                  │
-                  └─ next=="done" → END
+[ENTRY] → researcher → planner → writer → critic → supervisor → [END]
+                ↑                     ↑                   │
+                │                     └── REVISE ─────────┤
+                └──────────── REPLAN ─────────────────────┘
 ```
