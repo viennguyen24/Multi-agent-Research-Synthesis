@@ -164,7 +164,6 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> dict[str, Any]:
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.images_scale = 2.0
-    pipeline_options.generate_page_images = True
     pipeline_options.generate_picture_images = True
     pipeline_options.do_formula_enrichment = True
 

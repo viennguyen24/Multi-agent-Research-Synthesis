@@ -43,8 +43,8 @@ python main.py --ollama
 python main.py --open-router
 ```
 
-The PDF input is currently hardcoded to `Transformers.pdf` in `main.py`.
-You can still change the research query by adding `--query "Your question here"` or editing `DEFAULT_QUERY` in `main.py`.
+The PDF input defaults to `Transformers.pdf` in the project root directory. You can change this by adding `--pdf "Path to your PDF file here"` or editing `DEFAULT_SOURCE_PDF` in `main.py`.
+You change the research query by adding `--query "Your question here"` or editing `DEFAULT_QUERY` in `main.py`.
 
 ## Multimodal Artifacts
 
