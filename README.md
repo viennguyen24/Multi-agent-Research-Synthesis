@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ```
 
 Note: installing `docling` can take longer than the previous setup because it brings document-processing dependencies.
-Also Docling requires 1.5-2GB for it's custom model.
+Also Docling requires 1.5-2GB for its custom model.
 ### 3. API keys
 
 ```bash
