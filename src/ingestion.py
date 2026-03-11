@@ -230,7 +230,7 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> dict[str, Any]:
     chunks_path = artifact_root / "chunks.jsonl"
     with chunks_path.open("w", encoding="utf-8") as fp:
         for chunk_dict in source_chunks:
-            fp.write(json.dumps(chunk_dict, ensure_ascii=True) + "\n")
+            fp.write(json.dumps(chunk_dict, ensure_ascii=False) + "\n")
 
     document.save_as_markdown(markdown_path, image_mode=ImageRefMode.PLACEHOLDER)
     markdown_text = markdown_path.read_text(encoding="utf-8")
