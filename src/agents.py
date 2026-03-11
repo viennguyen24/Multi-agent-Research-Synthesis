@@ -27,7 +27,7 @@ def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
 
 
 def _manifest_summary(state: ResearchState) -> str:
-    manifest = state.get("manifest_json", {}) or {}
+    manifest = state.get("manifest_json", {})
     summary = {
         "doc_id": manifest.get("doc_id"),
         "markdown_path": manifest.get("markdown_path"),
