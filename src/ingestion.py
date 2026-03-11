@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from docling.chunking import HybridChunker
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -15,6 +16,7 @@ from docling_core.types.doc import ImageRefMode
 EQUATION_TOKEN_PATTERN = re.compile(r"\[\[eq:eq_\d{3}\]\]")
 INLINE_EQUATION_PATTERN = re.compile(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)")
 BLOCK_EQUATION_PATTERN = re.compile(r"\$\$(.+?)\$\$", flags=re.DOTALL)
+SECTION_NUMBER_RE = re.compile(r"^(\d+(?:\.\d+)*)\s")
 
 
 def _disable_hf_symlink_usage_on_windows() -> None:
@@ -39,6 +41,42 @@ def _disable_hf_symlink_usage_on_windows() -> None:
 
 def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _fix_heading_levels(document: Any) -> None:
+    """Infer proper heading depth from section numbering (e.g. '3.2.1' -> level 3).
+
+    Docling's PDF backend currently detects all section headers at level 1,
+    which prevents the hierarchical chunker from building a breadcrumb trail.
+    We parse the leading numbering pattern to recover the true depth.
+
+    Unnumbered headings that appear inside a deeper numbered section (e.g. a
+    figure sub-title misidentified as a section header) are demoted so they
+    nest below the last numbered heading instead of resetting the hierarchy.
+    """
+    headers = [
+        item for item in document.texts
+        if "section_header" in str(getattr(item, "label", ""))
+    ]
+
+    has_numbered = False
+    for item in headers:
+        text = (getattr(item, "text", "") or "").strip()
+        m = SECTION_NUMBER_RE.match(text)
+        if m:
+            item.level = m.group(1).count(".") + 1
+            has_numbered = True
+
+    if not has_numbered:
+        return
+
+    last_numbered_level = 0
+    for item in headers:
+        text = (getattr(item, "text", "") or "").strip()
+        if SECTION_NUMBER_RE.match(text):
+            last_numbered_level = item.level
+        elif last_numbered_level > 1:
+            item.level = last_numbered_level + 1
 
 
 def _extract_page_no(item: Any) -> int | None:
@@ -175,6 +213,25 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> dict[str, Any]:
     conv_res = converter.convert(source)
     document = conv_res.document
 
+    _fix_heading_levels(document)
+
+    chunker = HybridChunker()
+    source_chunks: list[dict[str, Any]] = []
+    for chunk in chunker.chunk(dl_doc=document):
+        source_chunks.append(
+            {
+                "text": chunk.text,
+                "contextualized_text": chunker.contextualize(chunk),
+                "headings": list(chunk.meta.headings) if chunk.meta.headings else [],
+                "captions": list(chunk.meta.captions) if chunk.meta.captions else [],
+            }
+        )
+
+    chunks_path = artifact_root / "chunks.jsonl"
+    with chunks_path.open("w", encoding="utf-8") as fp:
+        for chunk_dict in source_chunks:
+            fp.write(json.dumps(chunk_dict, ensure_ascii=True) + "\n")
+
     document.save_as_markdown(markdown_path, image_mode=ImageRefMode.PLACEHOLDER)
     markdown_text = markdown_path.read_text(encoding="utf-8")
 
@@ -247,9 +304,10 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> dict[str, Any]:
     _validate_references(markdown_text=markdown_text, manifest=manifest)
 
     return {
-        "source_markdown": markdown_text,
+        "source_chunks": source_chunks,
         "manifest_json": manifest,
         "image_count": len(images),
         "table_count": len(tables),
         "equation_count": len(equations),
+        "chunk_count": len(source_chunks),
     }

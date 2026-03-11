@@ -38,14 +38,16 @@ def main():
     artifacts = extract_multimodal_pdf_artifacts(str(pdf_path))
     preprocessing_message = (
         "[preprocessing] Extracted multimodal artifacts "
-        f"(images={artifacts['image_count']}, tables={artifacts['table_count']}, equations={artifacts['equation_count']})"
+        f"(images={artifacts['image_count']}, tables={artifacts['table_count']}, "
+        f"equations={artifacts['equation_count']}, chunks={artifacts['chunk_count']})"
     )
 
     graph = build_graph()
 
     result = graph.invoke({
         "query": args.query or DEFAULT_QUERY,
-        "source_markdown": artifacts["source_markdown"],
+        "source_chunks": artifacts["source_chunks"],
+        "selected_chunk_indices": [],
         "manifest_json": artifacts["manifest_json"],
         "plan": "",
         "draft": "",
