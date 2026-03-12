@@ -2,12 +2,13 @@ import json
 import os
 import re
 import shutil
+import psutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from docling.chunking import HybridChunker
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions
 from docling_core.types.doc import DoclingDocument
 
 from .schema import (
@@ -205,6 +206,8 @@ def build_pdf_pipeline_options() -> PdfPipelineOptions:
     pipeline_options.images_scale = 2.0
     pipeline_options.generate_picture_images = True
     pipeline_options.do_formula_enrichment = True
+    # Set the number of threads to use for the accelerator to number of physical cores
+    pipeline_options.accelerator_options = AcceleratorOptions(num_threads=psutil.cpu_count(logical=False), device="cpu")
     return pipeline_options
 
 

@@ -15,7 +15,7 @@ python --version
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate          # Linux/Mac: source .venv/bin/activate
+.venv\Scripts\activate          # Linux/Mac: source .venv/Scripts/activate
 pip install -r requirements.txt
 ```
 
@@ -43,8 +43,11 @@ python main.py --ollama
 python main.py --open-router
 ```
 
+### Optional Commandline Arguments
+
 The PDF input defaults to `Transformers.pdf` in the project root directory. You can change this by adding `--pdf "Path to your PDF file here"` or editing `DEFAULT_SOURCE_PDF` in `main.py`.
 You change the research query by adding `--query "Your question here"` or editing `DEFAULT_QUERY` in `main.py`.
+Adding the argument `-i` or `--interactive` adds a prompt for whether the user wants to continue, which pops up if a document is extracted and after the document extraction process is complete.
 
 ## Graph Flow
 
