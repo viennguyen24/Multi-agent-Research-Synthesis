@@ -27,14 +27,16 @@ def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
 
 
 def _manifest_summary(state: ResearchState) -> str:
-    manifest = state.get("manifest_json", {})
+    manifest = state.get("manifest_json")
+    if not manifest:
+        return "{}"
     summary = {
-        "doc_id": manifest.get("doc_id"),
-        "markdown_path": manifest.get("markdown_path"),
-        "image_count": len(manifest.get("images", [])),
-        "table_count": len(manifest.get("tables", [])),
-        "equation_count": len(manifest.get("equations", [])),
-        "references_preview": manifest.get("references", [])[:10],
+        "doc_id": manifest.doc_id,
+        "markdown_path": manifest.markdown_path,
+        "image_count": len(manifest.images),
+        "table_count": len(manifest.tables),
+        "equation_count": len(manifest.equations),
+        "references_preview": [ref.token for ref in manifest.references[:10]],
     }
     return json.dumps(summary, indent=2)
 
@@ -46,7 +48,7 @@ def _build_chunk_directory(state: ResearchState) -> str:
         return "(no chunks available)"
     lines: list[str] = []
     for i, chunk in enumerate(chunks):
-        headings = chunk.get("headings", [])
+        headings = chunk.headings
         label = " > ".join(headings) if headings else "(no heading)"
         lines.append(f"[{i}] {label}")
     return "\n".join(lines)
@@ -62,7 +64,7 @@ def _select_chunk_indices(state: ResearchState, char_budget: int = 10000) -> lis
 
     scored: list[tuple[int, int]] = []
     for i, chunk in enumerate(chunks):
-        heading_words = set(" ".join(chunk.get("headings", [])).lower().split())
+        heading_words = set(" ".join(chunk.headings).lower().split())
         score = len(query_words & heading_words)
         scored.append((score, i))
 
@@ -71,7 +73,7 @@ def _select_chunk_indices(state: ResearchState, char_budget: int = 10000) -> lis
     selected: list[int] = []
     used = 0
     for _score, i in scored:
-        text = chunks[i].get("contextualized_text", "")
+        text = chunks[i].contextualized_text
         if used + len(text) > char_budget:
             continue
         selected.append(i)
@@ -87,7 +89,7 @@ def _get_selected_chunk_texts(state: ResearchState) -> str:
     if not indices:
         return "(no document chunks selected)"
     separator = "\n\n---\n\n"
-    parts = [chunks[i].get("contextualized_text", "") for i in indices if i < len(chunks)]
+    parts = [chunks[i].contextualized_text for i in indices if i < len(chunks)]
     return separator.join(parts)
 
 
