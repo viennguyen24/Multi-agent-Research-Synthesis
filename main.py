@@ -1,5 +1,6 @@
 import argparse
 import sys
+import time
 from pathlib import Path
 from src.graph import build_graph
 import src.llm
@@ -20,7 +21,12 @@ def main():
         type=str,
         metavar="PATH",
         default=DEFAULT_SOURCE_PDF,
-        help="Path to the PDF to analyse (default: %(default)s)",
+        help="Path to the PDF to analyse (default: %(default)s)"
+    )
+    parser.add_argument(
+        "-i", "--interactive",
+        action="store_true",
+        help="Pause after document extraction and require user confirmation to continue",
     )
     args = parser.parse_args()
 
@@ -34,9 +40,22 @@ def main():
         src.llm.GLOBAL_CONFIG.provider = "openrouter"
     else:
         src.llm.GLOBAL_CONFIG.provider = "ollama"
-
+    
+    _t0 = time.perf_counter()
     processor = DocProcessor()
     artifacts = processor.process_document(str(pdf_path))
+    _pdf_elapsed = time.perf_counter() - _t0
+    
+    if artifacts.chunk_count > 0:
+        print(f"[preprocessing] PDF extraction completed in {_pdf_elapsed:.2f}s", flush=True)
+        
+    if args.interactive:
+        try:
+            response = input("Press Enter to continue, or type 'q' to quit: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\nAborted.")
+        if response == "q":
+            sys.exit("Execution stopped by user.")
     
     status = "Extracted" if artifacts.chunk_count > 0 else "FAILED TO EXTRACT (running without documents)"
     preprocessing_message = (

@@ -16,6 +16,7 @@ from .utils import (
     annotate_and_save_markdown,
     build_artifact_paths,
     build_artifact_references,
+    build_image_metadata_from_saved,
     build_pdf_pipeline_options,
     extract_and_save_chunks,
     extract_artifacts,
@@ -54,18 +55,18 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> ExtractionResult:
     print("Chunking document...")
     source_chunks = extract_and_save_chunks(document, paths["chunks_path"])
 
-    print("Saving markdown placeholder...")
-    document.save_as_markdown(paths["markdown_path"], image_mode=ImageRefMode.PLACEHOLDER)
+    print("Saving markdown with referenced images...")
+    document.save_as_markdown(
+        paths["markdown_path"],
+        image_mode=ImageRefMode.REFERENCED,
+        artifacts_dir=Path("images"),
+    )
     markdown_text = paths["markdown_path"].read_text(encoding="utf-8")
 
-    print("Extracting images and tables...")
-    images = extract_artifacts(
+    print("Building image metadata and extracting tables...")
+    images = build_image_metadata_from_saved(
         document=document,
-        artifact_root=artifact_root,
-        attr_name="pictures",
-        prefix="img",
-        kind="image",
-        expected_type=ExtractedImage
+        images_dir=paths["images_dir"],
     )
     tables = extract_artifacts(
         document=document,
