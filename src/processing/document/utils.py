@@ -307,7 +307,7 @@ def build_image_metadata_from_saved(
             break
 
         item_id = f"img_{idx:03d}"
-        rel_path = Path("images") / saved_files[file_idx].name
+        rel_path = saved_files[file_idx].relative_to(images_dir.parent)
         images.append(
             ExtractedImage(
                 id=item_id,
