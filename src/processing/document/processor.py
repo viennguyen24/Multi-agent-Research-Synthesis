@@ -1,10 +1,5 @@
-import logging
-from typing import Any
-
 from .pipeline import extract_multimodal_pdf_artifacts
 from .schema import ExtractionManifest, ExtractionResult
-
-logger = logging.getLogger(__name__)
 
 class DocProcessor:
     def process_document(self, source_pdf_path: str) -> ExtractionResult:
