@@ -1,4 +1,5 @@
 from .pipeline import extract_multimodal_pdf_artifacts
+from .processor import DocProcessor
 from .schema import (
     ArtifactReference,
     ExtractedChunk,
@@ -11,6 +12,7 @@ from .schema import (
 
 __all__ = [
     "extract_multimodal_pdf_artifacts",
+    "DocProcessor",
     "ExtractedImage",
     "ExtractedTable",
     "ExtractedEquation",
