@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from src.graph import build_graph
 import src.llm
-from src.ingestion import extract_multimodal_pdf_artifacts
+from src.processing.document import extract_multimodal_pdf_artifacts
 
 DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
 DEFAULT_SOURCE_PDF = "Transformers.pdf"
@@ -38,17 +38,17 @@ def main():
     artifacts = extract_multimodal_pdf_artifacts(str(pdf_path))
     preprocessing_message = (
         "[preprocessing] Extracted multimodal artifacts "
-        f"(images={artifacts['image_count']}, tables={artifacts['table_count']}, "
-        f"equations={artifacts['equation_count']}, chunks={artifacts['chunk_count']})"
+        f"(images={artifacts.image_count}, tables={artifacts.table_count}, "
+        f"equations={artifacts.equation_count}, chunks={artifacts.chunk_count})"
     )
 
     graph = build_graph()
 
     result = graph.invoke({
         "query": args.query or DEFAULT_QUERY,
-        "source_chunks": artifacts["source_chunks"],
+        "source_chunks": artifacts.source_chunks,
         "selected_chunk_indices": [],
-        "manifest_json": artifacts["manifest_json"],
+        "manifest_json": artifacts.manifest_json,
         "plan": "",
         "draft": "",
         "critique": "",
