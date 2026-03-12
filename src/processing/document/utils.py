@@ -283,6 +283,44 @@ def extract_artifacts(
     return extracted_items
 
 
+def build_image_metadata_from_saved(
+    document: DoclingDocument,
+    images_dir: Path,
+) -> list[ExtractedImage]:
+    """Build ExtractedImage metadata from images already saved by Docling's save_as_markdown.
+
+    Instead of re-saving images, this function scans the images directory for
+    PNG files that Docling wrote via ``ImageRefMode.REFERENCED`` and pairs them
+    (by sorted filename order) with ``document.pictures`` to collect page
+    numbers and captions.
+    """
+    saved_files = sorted(images_dir.glob("*.png"))
+    pictures = list(getattr(document, "pictures", []))
+
+    images: list[ExtractedImage] = []
+    file_idx = 0
+    for idx, item in enumerate(pictures, start=1):
+        img = item.get_image(document)
+        if img is None:
+            continue
+        if file_idx >= len(saved_files):
+            break
+
+        item_id = f"img_{idx:03d}"
+        rel_path = Path("images") / saved_files[file_idx].name
+        images.append(
+            ExtractedImage(
+                id=item_id,
+                path=str(rel_path).replace("\\", "/"),
+                page=_extract_page_no(item),
+                caption=_extract_caption(item),
+            )
+        )
+        file_idx += 1
+
+    return images
+
+
 def build_artifact_references(
     *artifact_groups: tuple[Literal["image", "table", "equation"], str, list[ExtractedImage | ExtractedTable | ExtractedEquation]]
 ) -> list[ArtifactReference]:

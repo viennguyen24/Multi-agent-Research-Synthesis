@@ -8,7 +8,7 @@ Document Ingestion -> Lead Researcher -> Editor -> Critic loop.
 ### 1. Python 3.11+
 
 ```bash
-python --version
+
 ```
 
 ### 2. Virtual environment

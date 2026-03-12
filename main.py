@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--query", type=str, default=None, help="Research query")
     parser.add_argument(
         "--pdf",
-        type=str
+        type=str,
         metavar="PATH",
         default=DEFAULT_SOURCE_PDF,
         help="Path to the PDF to analyse (default: %(default)s)"
@@ -48,13 +48,14 @@ def main():
     
     if artifacts.chunk_count > 0:
         print(f"[preprocessing] PDF extraction completed in {_pdf_elapsed:.2f}s", flush=True)
-        if args.interactive:
-            try:
-                response = input("Press Enter to continue, or type 'q' to quit: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                sys.exit("\nAborted.")
-            if response == "q":
-                sys.exit("Execution stopped by user.")
+        
+    if args.interactive:
+        try:
+            response = input("Press Enter to continue, or type 'q' to quit: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\nAborted.")
+        if response == "q":
+            sys.exit("Execution stopped by user.")
     
     status = "Extracted" if artifacts.chunk_count > 0 else "FAILED TO EXTRACT (running without documents)"
     preprocessing_message = (
