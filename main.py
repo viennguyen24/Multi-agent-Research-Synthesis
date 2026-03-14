@@ -6,7 +6,7 @@ from src.database import get_database_provider
 from src.graph import build_graph
 import src.llm
 from src.processing.document import DocProcessor
-from src.processing.document.utils import _slugify
+from src.processing.document._common import _slugify
 
 DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
 DEFAULT_SOURCE_PDF = "Transformers.pdf"

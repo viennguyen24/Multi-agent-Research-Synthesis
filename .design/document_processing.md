@@ -2,6 +2,50 @@
 
 Detailed technical implementation of document ingestion, chunking, and artifact extraction.
 
+## OCR Backend Architecture
+
+The pipeline uses the **Strategy pattern** to decouple document extraction from any specific OCR library. All backends implement a single interface:
+
+```python
+class OCRBackend(ABC):
+    @abstractmethod
+    def extract(self, source_pdf_path: str) -> ExtractionResult: ...
+```
+
+### Backend Registry
+
+`processor.py` maintains a `BACKEND_REGISTRY` mapping string keys to concrete backend classes:
+
+| Key | Class | Status |
+|------|------|--------|
+| `"docling"` | `DoclingBackend` | ✅ Active (default) |
+| `"lighton"` | `LightOnOCRBackend` | 🚧 Stub — raises `NotImplementedError` |
+| `"chandra"` | `ChandraOCRBackend` | 🚧 Not written yet |
+| `"glm"` | `GLMOCRBackend` | 🚧 Not written yet |
+
+`DocProcessor` accepts an optional `backend` parameter (string key or `OCRBackend` instance). It defaults to `"docling"`, so existing callers are unaffected.
+
+### Adding a new backend
+
+1. Create a new module in `src/processing/document/backends/`.
+2. Subclass `OCRBackend` and implement `extract()` to return an `ExtractionResult`.
+3. Register the class in `processor.BACKEND_REGISTRY`.
+4. (Optional) Add a CLI flag in `main.py` (e.g. `--ocr-backend`) and pass the key to `DocProcessor(backend=...)`.
+
+### File layout
+
+```
+src/processing/document/
+├── _common.py               # Schema-level helpers (no OCR dependency)
+├── backend_base.py          # OCRBackend ABC
+├── backends/
+│   ├── __init__.py
+│   ├── docling_backend.py   # Full Docling pipeline (parse → chunk → extract → manifest)
+│   └── lighton_backend.py   # Stub for LightOnOCR-2-1B
+├── processor.py             # DocProcessor + backend factory/registry
+└── schema.py                # Shared data models
+```
+
 ## Multimodal Artifacts
 
 Each run ingests the PDF and writes artifacts to `artifacts/<doc>`, which includes:

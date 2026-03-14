@@ -1,5 +1,6 @@
-from .pipeline import extract_multimodal_pdf_artifacts
-from .processor import DocProcessor
+from ._common import _slugify, _verify_references_in_markdown, build_artifact_references
+from .backend_base import OCRBackend
+from .processor import DocProcessor, get_ocr_backend
 from .schema import (
     ArtifactReference,
     ExtractedChunk,
@@ -11,8 +12,10 @@ from .schema import (
 )
 
 __all__ = [
-    "extract_multimodal_pdf_artifacts",
     "DocProcessor",
+    "get_ocr_backend",
+    "OCRBackend",
+    "build_artifact_references",
     "ExtractedImage",
     "ExtractedTable",
     "ExtractedEquation",
