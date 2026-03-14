@@ -1,9 +1,10 @@
+import base64
 import json
 import os
 import re
-import shutil
 import psutil
 from dataclasses import asdict
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -178,27 +179,7 @@ def _verify_references_in_markdown(markdown_text: str, manifest: ExtractionManif
         raise RuntimeError(f"Equation anchors missing from markdown: {missing_equation_anchors}")
 
 
-def build_artifact_paths(doc_id: str) -> dict[str, Path]:
-    artifact_root = Path("artifacts") / doc_id
-    if artifact_root.exists():
-        shutil.rmtree(artifact_root)
-    
-    images_dir = artifact_root / "images"
-    tables_dir = artifact_root / "tables"
-    
-    artifact_root.mkdir(parents=True)
-    images_dir.mkdir(parents=True)
-    tables_dir.mkdir(parents=True)
-    
-    return {
-        "artifact_root": artifact_root,
-        "images_dir": images_dir,
-        "tables_dir": tables_dir,
-        "markdown_path": artifact_root / "document.md",
-        "equations_path": artifact_root / "equations.jsonl",
-        "manifest_path": artifact_root / "manifest.json",
-        "chunks_path": artifact_root / "chunks.jsonl",
-    }
+
 
 
 def build_pdf_pipeline_options() -> PdfPipelineOptions:
@@ -211,8 +192,7 @@ def build_pdf_pipeline_options() -> PdfPipelineOptions:
     return pipeline_options
 
 
-def write_artifact(
-    artifact_root: Path,
+def extract_artifact(
     item: Any,
     item_id: str,
     kind: Literal["image", "table"],
@@ -222,30 +202,31 @@ def write_artifact(
         image = item.get_image(document)
         if image is None:
             return None
-        rel_path = Path("images") / f"{item_id}.png"
-        out_path = artifact_root / rel_path
-        image.save(out_path, "PNG")
+        
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        
         return ExtractedImage(
             id=item_id,
-            path=str(rel_path).replace("\\", "/"),
+            mime_type="image/png",
+            base64_data=img_str,
             page=_extract_page_no(item),
             caption=_extract_caption(item),
         )
     elif kind == "table":
-        rel_path = Path("tables") / f"{item_id}.html"
-        out_path = artifact_root / rel_path
-        out_path.write_text(item.export_to_html(doc=document), encoding="utf-8")
+        html = item.export_to_html(doc=document)
         idx = int(item_id.split("_")[-1])
         return ExtractedTable(
             id=item_id,
-            path=str(rel_path).replace("\\", "/"),
+            html_content=html,
             page=_extract_page_no(item),
             title=f"Table {idx}",
         )
     return None
 
 
-def extract_and_save_chunks(document: DoclingDocument, chunks_path: Path) -> list[ExtractedChunk]:
+def extract_chunks(document: DoclingDocument) -> list[ExtractedChunk]:
     chunker = HybridChunker()
     source_chunks: list[ExtractedChunk] = []
     for chunk in chunker.chunk(dl_doc=document):
@@ -257,17 +238,12 @@ def extract_and_save_chunks(document: DoclingDocument, chunks_path: Path) -> lis
                 captions=list(chunk.meta.captions) if chunk.meta.captions else [],
             )
         )
-
-    with chunks_path.open("w", encoding="utf-8") as fp:
-        for chunk in source_chunks:
-            fp.write(json.dumps(asdict(chunk), ensure_ascii=False) + "\n")
             
     return source_chunks
 
 
 def extract_artifacts(
     document: DoclingDocument,
-    artifact_root: Path,
     attr_name: str,
     prefix: str,
     kind: Literal["image", "table"],
@@ -277,48 +253,23 @@ def extract_artifacts(
     items = getattr(document, attr_name, [])
     for idx, item in enumerate(items, start=1):
         item_id = f"{prefix}_{idx:03d}"
-        res = write_artifact(artifact_root, item, item_id, kind, document)
+        res = extract_artifact(item, item_id, kind, document)
         if res and isinstance(res, expected_type):
             extracted_items.append(res)
     return extracted_items
 
 
-def build_image_metadata_from_saved(
-    document: DoclingDocument,
-    images_dir: Path,
+def build_image_metadata_from_document(
+    document: DoclingDocument
 ) -> list[ExtractedImage]:
-    """Build ExtractedImage metadata from images already saved by Docling's save_as_markdown.
-
-    Instead of re-saving images, this function scans the images directory for
-    PNG files that Docling wrote via ``ImageRefMode.REFERENCED`` and pairs them
-    (by sorted filename order) with ``document.pictures`` to collect page
-    numbers and captions.
-    """
-    saved_files = sorted(images_dir.glob("*.png"))
-    pictures = list(getattr(document, "pictures", []))
-
-    images: list[ExtractedImage] = []
-    file_idx = 0
-    for idx, item in enumerate(pictures, start=1):
-        img = item.get_image(document)
-        if img is None:
-            continue
-        if file_idx >= len(saved_files):
-            break
-
-        item_id = f"img_{idx:03d}"
-        rel_path = saved_files[file_idx].relative_to(images_dir.parent)
-        images.append(
-            ExtractedImage(
-                id=item_id,
-                path=str(rel_path).replace("\\", "/"),
-                page=_extract_page_no(item),
-                caption=_extract_caption(item),
-            )
-        )
-        file_idx += 1
-
-    return images
+    """Build ExtractedImage natively from document.pictures without writing files."""
+    return extract_artifacts(
+        document=document,
+        attr_name="pictures",
+        prefix="img",
+        kind="image",
+        expected_type=ExtractedImage
+    )
 
 
 def build_artifact_references(
@@ -331,20 +282,19 @@ def build_artifact_references(
             references.append(ArtifactReference(token=token, item_id=item.id, kind=kind))
     return references
 
-
-def annotate_and_save_markdown(
+def annotate_markdown(
     markdown_text: str,
     images: list[ExtractedImage],
-    tables: list[ExtractedTable],
-    markdown_path: Path,
-    equations_path: Path
+    tables: list[ExtractedTable]
 ) -> tuple[str, list[ExtractedEquation]]:
     markdown_text, equations = _annotate_equations(markdown_text)
-    markdown_text = _append_reference_section(markdown_text, images=images, tables=tables)
-    markdown_path.write_text(markdown_text, encoding="utf-8")
-
-    with equations_path.open("w", encoding="utf-8") as fp:
-        for equation in equations:
-            fp.write(json.dumps(asdict(equation), ensure_ascii=True) + "\n")
+    # The image path is now virtual, or represented just by ID
+    lines = ["", "## Artifact References", ""]
+    for item in images:
+        lines.append(f"- [[img:{item.id}]] -> Attached Image {item.id}")
+    for item in tables:
+        lines.append(f"- [[tbl:{item.id}]] -> Attached Table {item.id}")
+    lines.append("")
+    markdown_text = markdown_text.rstrip() + "\n" + "\n".join(lines)
             
     return markdown_text, equations

@@ -13,12 +13,11 @@ from .utils import (
     _infer_heading_depth_from_numbering,
     _slugify,
     _verify_references_in_markdown,
-    annotate_and_save_markdown,
-    build_artifact_paths,
+    annotate_markdown,
     build_artifact_references,
-    build_image_metadata_from_saved,
+    build_image_metadata_from_document,
     build_pdf_pipeline_options,
-    extract_and_save_chunks,
+    extract_chunks,
     extract_artifacts,
 )
 
@@ -37,8 +36,6 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> ExtractionResult:
     
     start_time = time.time()
     doc_id = _slugify(source.stem) or "document"
-    paths = build_artifact_paths(doc_id)
-    artifact_root = paths["artifact_root"]
     print(f"Starting extraction for {source.name} (ID: {doc_id})")
     
     converter = DocumentConverter(
@@ -52,25 +49,20 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> ExtractionResult:
     document = conv_res.document
     _infer_heading_depth_from_numbering(document)
 
-    print("Chunking document...")
-    source_chunks = extract_and_save_chunks(document, paths["chunks_path"])
+    print("Chunking document in memory...")
+    source_chunks = extract_chunks(document)
 
-    print("Saving markdown with referenced images...")
-    document.save_as_markdown(
-        paths["markdown_path"],
-        image_mode=ImageRefMode.REFERENCED,
-        artifacts_dir=Path("images"),
-    )
-    markdown_text = paths["markdown_path"].read_text(encoding="utf-8")
+    print("Extracting markdown with referenced images...")
+    # Using ImageRefMode.REFERENCED will keep the unique IDs in the markdown.
+    # Since we are not writing to disk, it won't actually export PNG files.
+    markdown_text = document.export_to_markdown(image_mode=ImageRefMode.REFERENCED)
 
-    print("Building image metadata and extracting tables...")
-    images = build_image_metadata_from_saved(
+    print("Extracting image metadata and tables from memory...")
+    images = build_image_metadata_from_document(
         document=document,
-        images_dir=paths["images_dir"],
     )
     tables = extract_artifacts(
         document=document,
-        artifact_root=artifact_root,
         attr_name="tables",
         prefix="tbl",
         kind="table",
@@ -78,12 +70,10 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> ExtractionResult:
     )
 
     print("Annotating equations...")
-    markdown_text, equations = annotate_and_save_markdown(
+    markdown_text, equations = annotate_markdown(
         markdown_text=markdown_text,
         images=images,
         tables=tables,
-        markdown_path=paths["markdown_path"],
-        equations_path=paths["equations_path"]
     )
 
     print("Building references...")
@@ -93,17 +83,67 @@ def extract_multimodal_pdf_artifacts(source_pdf_path: str) -> ExtractionResult:
         ("equation", "eq", equations)
     )
 
-    print("Saving manifest...")
+    print("Injecting artifact tokens into chunks...")
+    for eq in equations:
+        for chunk in source_chunks:
+            if eq.latex_or_text and eq.latex_or_text in chunk.text:
+                chunk.text = chunk.text.replace(eq.latex_or_text, f"{eq.latex_or_text} {eq.markdown_anchor}")
+                chunk.contextualized_text = chunk.contextualized_text.replace(eq.latex_or_text, f"{eq.latex_or_text} {eq.markdown_anchor}")
+
+    for img in images:
+        injected = False
+        token = f"[[img:{img.id}]]"
+        if img.caption:
+            for chunk in source_chunks:
+                # 1. match in chunk captions metadata
+                if chunk.captions and any(img.caption in c for c in chunk.captions):
+                    chunk.text += f"\n\n{token}"
+                    chunk.contextualized_text += f"\n\n{token}"
+                    injected = True
+                    break
+            if not injected:
+                # 2. match in chunk text directly
+                for chunk in source_chunks:
+                    if img.caption in chunk.text:
+                        chunk.text += f"\n\n{token}"
+                        chunk.contextualized_text += f"\n\n{token}"
+                        injected = True
+                        break
+        if not injected and source_chunks:
+            source_chunks[-1].text += f"\n\n{token}"
+            source_chunks[-1].contextualized_text += f"\n\n{token}"
+
+    for tbl in tables:
+        injected = False
+        token = f"[[tbl:{tbl.id}]]"
+        if tbl.title:
+            for chunk in source_chunks:
+                if chunk.captions and any(tbl.title in c for c in chunk.captions):
+                    chunk.text += f"\n\n{token}"
+                    chunk.contextualized_text += f"\n\n{token}"
+                    injected = True
+                    break
+            if not injected:
+                for chunk in source_chunks:
+                    if tbl.title in chunk.text:
+                        chunk.text += f"\n\n{token}"
+                        chunk.contextualized_text += f"\n\n{token}"
+                        injected = True
+                        break
+        if not injected and source_chunks:
+            source_chunks[-1].text += f"\n\n{token}"
+            source_chunks[-1].contextualized_text += f"\n\n{token}"
+
+    print("Generating manifest...")
     manifest = ExtractionManifest(
         doc_id=doc_id,
         source_pdf_path=str(source),
-        markdown_path=str(paths["markdown_path"]),
+        markdown_path="",  # Markdown is stored dynamically now.
         images=images,
         tables=tables,
         equations=equations,
         references=references,
     )
-    paths["manifest_path"].write_text(json.dumps(asdict(manifest), indent=2, ensure_ascii=True), encoding="utf-8")
 
     print("Validating references...")
     _verify_references_in_markdown(markdown_text=markdown_text, manifest=manifest)

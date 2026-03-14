@@ -2,13 +2,14 @@ import argparse
 import sys
 import time
 from pathlib import Path
+from src.database import get_database_provider
 from src.graph import build_graph
 import src.llm
 from src.processing.document import DocProcessor
+from src.processing.document.utils import _slugify
 
 DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
 DEFAULT_SOURCE_PDF = "Transformers.pdf"
-
 
 def main():
     parser = argparse.ArgumentParser(description="Run the research synthesis agent.")
@@ -22,6 +23,11 @@ def main():
         metavar="PATH",
         default=DEFAULT_SOURCE_PDF,
         help="Path to the PDF to analyse (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--use-db",
+        action="store_true",
+        help="Skip document processing and attempt to load artifacts from the existing SQLite database",
     )
     parser.add_argument(
         "-i", "--interactive",
@@ -42,12 +48,25 @@ def main():
         src.llm.GLOBAL_CONFIG.provider = "ollama"
     
     _t0 = time.perf_counter()
-    processor = DocProcessor()
-    artifacts = processor.process_document(str(pdf_path))
+    doc_id = _slugify(pdf_path.stem)
+    db = get_database_provider()
+    
+    if args.use_db:
+        db.setup()
+        artifacts = db.load_result(doc_id)
+        if not artifacts:
+            sys.exit(f"error: No cached database entry found for doc_id '{doc_id}'. The existing processor.db does not match the requested PDF. Please run without --use-db to re-process the document.")
+    else:
+        db.reset()
+        processor = DocProcessor()
+        artifacts = processor.process_document(str(pdf_path))
+        db.save_result(artifacts)
+        
     _pdf_elapsed = time.perf_counter() - _t0
     
     if artifacts.chunk_count > 0:
-        print(f"[preprocessing] PDF extraction completed in {_pdf_elapsed:.2f}s", flush=True)
+        source_str = "DATABASE" if args.use_db else "Docling"
+        print(f"[preprocessing] PDF extraction from {source_str} completed in {_pdf_elapsed:.2f}s", flush=True)
         
     if args.interactive:
         try:

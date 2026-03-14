@@ -8,12 +8,14 @@ class ExtractedImage:
     
     Attributes:
         id: Unique artifact identifier (e.g., img_001)
-        path: Path to the saved PNG file relative to the artifact root
+        mime_type: The MIME type of the image (e.g., image/png)
+        base64_data: The raw base64 encoded string of the image
         page: 1-indexed page number where the image was found
         caption: Extracted caption text associated with the picture
     """
     id: str
-    path: str
+    mime_type: str
+    base64_data: str
     page: int | None
     caption: str
 
@@ -24,12 +26,12 @@ class ExtractedTable:
     
     Attributes:
         id: Unique artifact identifier (e.g., tbl_001)
-        path: Path to the saved HTML export relative to the artifact root
+        html_content: Raw HTML string representing the table
         page: 1-indexed page number where the table was found
         title: Extracted table title or inferred name
     """
     id: str
-    path: str
+    html_content: str
     page: int | None
     title: str
 
