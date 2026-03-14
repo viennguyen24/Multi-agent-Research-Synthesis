@@ -2,7 +2,7 @@ import sqlite3
 import base64
 import os
 
-def dump_images():
+def dump_images() -> None:
     output_dir = "extracted_viewer"
     os.makedirs(output_dir, exist_ok=True)
     
