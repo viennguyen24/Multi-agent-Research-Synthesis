@@ -49,7 +49,8 @@ def _disable_hf_symlink_usage_on_windows() -> None:
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
     try:
         import huggingface_hub.file_download as hf_file_download
-    except Exception:
+    except ImportError:
+        # Consider logging a warning here if huggingface_hub is an expected dependency.
         return
 
     hf_file_download._are_symlinks_supported_in_dir.clear()
