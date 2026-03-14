@@ -11,7 +11,7 @@ from src.processing.document._common import _slugify
 DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
 DEFAULT_SOURCE_PDF = "Transformers.pdf"
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Run the research synthesis agent.")
     provider_group = parser.add_mutually_exclusive_group()
     provider_group.add_argument("--open-router", action="store_true", help="Use OpenRouter provider")
