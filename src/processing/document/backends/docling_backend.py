@@ -125,6 +125,84 @@ def _extract_caption(item: Any) -> str:
     return " ".join(pieces).strip()
 
 
+def _get_artifact_bbox(item: Any) -> tuple[float, float, float, float] | None:
+    """Return the (l, t, r, b) bounding box from an item's first provenance entry, or None."""
+    provs = getattr(item, "prov", None)
+    if not provs:
+        return None
+    bbox = getattr(provs[0], "bbox", None)
+    if bbox is None:
+        return None
+    return (bbox.l, bbox.t, bbox.r, bbox.b)
+
+
+def _find_best_chunk_for_artifact(
+    artifact_page: int | None,
+    artifact_bbox: tuple[float, float, float, float] | None,
+    source_chunks: list[ExtractedChunk],
+) -> int:
+    """Return the index of the best chunk to attach an artifact token to.
+
+    Primary: chunks on the same page as the artifact, ranked by minimum Euclidean
+    distance from the artifact centroid to any of the chunk's bboxes.
+    Fallback: when no chunk shares the page, or when bbox data is absent, pick the
+    chunk on the nearest page. Never blindly falls back to source_chunks[-1].
+    """
+    if not source_chunks:
+        return 0
+
+    # Compute artifact centroid when bbox is available
+    cx: float | None = None
+    cy: float | None = None
+    if artifact_bbox is not None:
+        l, t, r, b = artifact_bbox
+        cx = (l + r) / 2.0
+        cy = (t + b) / 2.0
+
+    def _bbox_distance(bboxes: list[tuple[float, float, float, float, int]], page: int) -> float:
+        """Minimum Euclidean distance from (cx, cy) to any bbox on the given page."""
+        if cx is None or cy is None:
+            return 0.0
+        best = float("inf")
+        for bl, bt, br, bb, bp in bboxes:
+            if bp != page:
+                continue
+            # Clamp the centroid to the bbox and measure distance
+            nearest_x = max(bl, min(cx, br))
+            nearest_y = max(bt, min(cy, bb))
+            dist = ((cx - nearest_x) ** 2 + (cy - nearest_y) ** 2) ** 0.5
+            if dist < best:
+                best = dist
+        return best if best < float("inf") else float("inf")
+
+    # Try to find chunks that share the artifact's page
+    if artifact_page is not None:
+        same_page = [
+            (i, chunk) for i, chunk in enumerate(source_chunks)
+            if artifact_page in chunk.page_numbers
+        ]
+        if same_page:
+            if cx is not None and cy is not None:
+                best_idx, _ = min(
+                    same_page,
+                    key=lambda t: _bbox_distance(t[1].bboxes, artifact_page),
+                )
+            else:
+                # No bbox — pick the last chunk on the page (most likely after inline content)
+                best_idx = same_page[-1][0]
+            return best_idx
+
+    # Fallback: pick the chunk on the nearest page
+    def _page_distance(chunk: ExtractedChunk) -> float:
+        if not chunk.page_numbers:
+            return float("inf")
+        if artifact_page is None:
+            return float("inf")
+        return float(min(abs(p - artifact_page) for p in chunk.page_numbers))
+
+    return min(range(len(source_chunks)), key=lambda i: _page_distance(source_chunks[i]))
+
+
 # ---------------------------------------------------------------------------
 # Chunking
 # ---------------------------------------------------------------------------
@@ -134,12 +212,24 @@ def _extract_chunks(document: DoclingDocument) -> list[ExtractedChunk]:
     chunker = HybridChunker()
     source_chunks: list[ExtractedChunk] = []
     for chunk in chunker.chunk(dl_doc=document):
+        page_numbers: list[int] = []
+        bboxes: list[tuple[float, float, float, float, int]] = []
+        for doc_item in (chunk.meta.doc_items or []):
+            for prov in (getattr(doc_item, "prov", None) or []):
+                page_no = getattr(prov, "page_no", None)
+                bbox = getattr(prov, "bbox", None)
+                if page_no is not None:
+                    page_numbers.append(page_no)
+                if bbox is not None and page_no is not None:
+                    bboxes.append((bbox.l, bbox.t, bbox.r, bbox.b, page_no))
         source_chunks.append(
             ExtractedChunk(
                 text=chunk.text,
                 contextualized_text=chunker.contextualize(chunk),
                 headings=list(chunk.meta.headings) if chunk.meta.headings else [],
                 captions=list(chunk.meta.captions) if chunk.meta.captions else [],
+                page_numbers=sorted(set(page_numbers)),
+                bboxes=bboxes,
             )
         )
     return source_chunks
@@ -188,18 +278,23 @@ def _extract_artifacts(
     prefix: str,
     kind: Literal["image", "table"],
     expected_type: type[T],
-) -> list[T]:
-    extracted_items: list[T] = []
+) -> list[tuple[Any, T]]:
+    """Extract artifacts and return (source_doc_item, extracted) pairs.
+
+    Retaining the source DocItem allows callers to access its prov bbox
+    directly during artifact token injection.
+    """
+    pairs: list[tuple[Any, T]] = []
     items = getattr(document, attr_name, [])
     for idx, item in enumerate(items, start=1):
         item_id = f"{prefix}_{idx:03d}"
         res = _extract_artifact(item, item_id, kind, document)
         if res and isinstance(res, expected_type):
-            extracted_items.append(res)
-    return extracted_items
+            pairs.append((item, res))
+    return pairs
 
 
-def _build_image_metadata(document: DoclingDocument) -> list[ExtractedImage]:
+def _build_image_metadata(document: DoclingDocument) -> list[tuple[Any, ExtractedImage]]:
     return _extract_artifacts(
         document=document,
         attr_name="pictures",
@@ -319,14 +414,16 @@ class DoclingBackend(OCRBackend):
         )
 
         print("Extracting image metadata and tables from memory...")
-        images = _build_image_metadata(document)
-        tables = _extract_artifacts(
+        image_pairs = _build_image_metadata(document)
+        table_pairs = _extract_artifacts(
             document=document,
             attr_name="tables",
             prefix="tbl",
             kind="table",
             expected_type=ExtractedTable,
         )
+        images = [img for _, img in image_pairs]
+        tables = [tbl for _, tbl in table_pairs]
 
         print("Annotating equations...")
         markdown_text, equations = _annotate_markdown(
@@ -355,51 +452,19 @@ class DoclingBackend(OCRBackend):
                         f"{eq.latex_or_text} {eq.markdown_anchor}",
                     )
 
-        for img in images:
-            injected = False
+        for doc_item, img in image_pairs:
             token = f"[[img:{img.id}]]"
-            if img.caption:
-                for chunk in source_chunks:
-                    if chunk.captions and any(
-                        img.caption in c for c in chunk.captions
-                    ):
-                        chunk.text += f"\n\n{token}"
-                        chunk.contextualized_text += f"\n\n{token}"
-                        injected = True
-                        break
-                if not injected:
-                    for chunk in source_chunks:
-                        if img.caption in chunk.text:
-                            chunk.text += f"\n\n{token}"
-                            chunk.contextualized_text += f"\n\n{token}"
-                            injected = True
-                            break
-            if not injected and source_chunks:
-                source_chunks[-1].text += f"\n\n{token}"
-                source_chunks[-1].contextualized_text += f"\n\n{token}"
+            bbox = _get_artifact_bbox(doc_item)
+            idx = _find_best_chunk_for_artifact(img.page, bbox, source_chunks)
+            source_chunks[idx].text += f"\n\n{token}"
+            source_chunks[idx].contextualized_text += f"\n\n{token}"
 
-        for tbl in tables:
-            injected = False
+        for doc_item, tbl in table_pairs:
             token = f"[[tbl:{tbl.id}]]"
-            if tbl.title:
-                for chunk in source_chunks:
-                    if chunk.captions and any(
-                        tbl.title in c for c in chunk.captions
-                    ):
-                        chunk.text += f"\n\n{token}"
-                        chunk.contextualized_text += f"\n\n{token}"
-                        injected = True
-                        break
-                if not injected:
-                    for chunk in source_chunks:
-                        if tbl.title in chunk.text:
-                            chunk.text += f"\n\n{token}"
-                            chunk.contextualized_text += f"\n\n{token}"
-                            injected = True
-                            break
-            if not injected and source_chunks:
-                source_chunks[-1].text += f"\n\n{token}"
-                source_chunks[-1].contextualized_text += f"\n\n{token}"
+            bbox = _get_artifact_bbox(doc_item)
+            idx = _find_best_chunk_for_artifact(tbl.page, bbox, source_chunks)
+            source_chunks[idx].text += f"\n\n{token}"
+            source_chunks[idx].contextualized_text += f"\n\n{token}"
 
         print("Generating manifest...")
         manifest = ExtractionManifest(

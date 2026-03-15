@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, TypeVar
 
 @dataclass
@@ -63,11 +63,15 @@ class ExtractedChunk:
         contextualized_text: Text with heading breadcrumbs prepended for better LLM grounding
         headings: List of all ancestor headers from the document root
         captions: List of captions from figures or tables semantically linked to this chunk
+        page_numbers: Sorted list of all page numbers spanned by this chunk's doc_items
+        bboxes: List of (l, t, r, b, page_no) tuples, one per provenance entry across all doc_items
     """
     text: str
     contextualized_text: str
     headings: list[str]
     captions: list[str]
+    page_numbers: list[int] = field(default_factory=list)
+    bboxes: list[tuple[float, float, float, float, int]] = field(default_factory=list)
 
 @dataclass
 class ArtifactReference:
