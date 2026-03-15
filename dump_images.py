@@ -13,7 +13,7 @@ def dump_images() -> None:
         for row in cursor.fetchall():
             img_id, mime_type, b64_data = row
             ext = "png"
-            if "jpeg" in mime_type or "jpg" in mime_type:
+            if mime_type == "image/jpeg":
                 ext = "jpg"
             if "," in b64_data:
                 b64_data = b64_data.split(",")[1]
