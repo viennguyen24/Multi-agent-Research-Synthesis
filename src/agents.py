@@ -4,8 +4,10 @@ import json
 from src.state import ResearchState
 from src.llm import get_llm
 from src.util import AGENT_ROLES, MAX_ITERATIONS
+from langfuse.decorators import observe
 
 
+@observe(as_type="generation")
 def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
     print(f"  -> requesting {role}...", flush=True)
     messages = [
