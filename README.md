@@ -32,7 +32,17 @@ Edit `.env` — replace the placeholder values with your LLM Provider's API key.
 - [Ollama Cloud API](https://ollama.com/settings/keys)
 - [Google AI Studio](https://github.com/google-gemini/cookbook/blob/main/quickstarts/Get_started.ipynb)
 
-### 4. (Optional) Change model
+### 4. Langfuse Logging Setup
+
+To enable observability, ensure the following API keys are set in your `.env` file (you can get these from your Langfuse project settings):
+```env
+LANGFUSE_SECRET_KEY="sk-lf-..."
+LANGFUSE_PUBLIC_KEY="pk-lf-..."
+LANGFUSE_BASE_URL="https://cloud.langfuse.com"
+```
+The codebase uses `langfuse` which will automatically pick up these environment variables to trace agent runs.
+
+### 5. (Optional) Change model
 
 Edit `DEFAULT_MODEL` in `src/util.py`.
 
@@ -67,5 +77,11 @@ START → lead_researcher (selects chunk indices)
                   │         (uses selected chunks)       │
                   └◄─────────────────────────────────────┘
                   │
-                  └─ next=="done" → END
+                  └- next=="done" → END
 ```
+
+## Telemetry & Logging
+
+The system implements a dual-layer observability strategy to maintain clean agent logic while ensuring comprehensive tracing:
+- **Workflow Tracing**: Captures the high-level orchestration, state transitions, and routing overhead as the research document flows between the specialized agents.
+- **Cognitive Tracing**: Instruments the underlying LLM calls to capture precise generation metrics (latency, token usage) and raw prompt details completely independently of the graph execution.

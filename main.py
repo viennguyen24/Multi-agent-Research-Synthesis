@@ -8,6 +8,7 @@ import src.llm
 from src.processing.document import DocProcessor
 from src.processing.document._common import _slugify
 from src.llm import GLOBAL_CONFIG, Provider
+from src.logging.logger import AgentLogger
 
 DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
 DEFAULT_SOURCE_PDF = "Transformers.pdf"
@@ -99,6 +100,9 @@ def main() -> None:
 
     graph = build_graph()
 
+    logger = AgentLogger()
+    langfuse_handler = logger.get_langgraph_handler()
+
     result = graph.invoke({
         "query": args.query or DEFAULT_QUERY,
         "source_chunks": artifacts.source_chunks,
@@ -110,7 +114,7 @@ def main() -> None:
         "iteration": 0,
         "next": "continue",
         "messages": [preprocessing_message],
-    })
+    }, config={"callbacks": [langfuse_handler]})
 
     print("\n--- Agent Log ---")
     for msg in result.get("messages", []):
@@ -118,6 +122,8 @@ def main() -> None:
 
     print("\n--- Final Draft ---")
     print(result.get("draft", "(no draft produced)"))
+    
+    logger.flush()
 
 
 if __name__ == "__main__":
