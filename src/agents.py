@@ -11,11 +11,11 @@ from langgraph.graph import END
 from src.state import (
     ResearchState,
     ResearchContextOutput,
-    ResearchPlanOutput,
+    DeliveryPlanOutput,
     CritiqueOutput,
     SupervisorOutput,
     ResearchContext,
-    ResearchPlan,
+    DeliveryPlan,
     Draft,
     DraftMetadata,
     Critique,
@@ -56,6 +56,7 @@ def researcher_node(state: ResearchState) -> Command[Literal["planner"]]:
     Always routes to the Planner.
     """
     query = state["query"]
+    source_docs = state.get("source_documents", [])
     revisions = state.get("revisions", [])
 
     # why: on replan the Supervisor provides direction for re-research
@@ -69,7 +70,11 @@ def researcher_node(state: ResearchState) -> Command[Literal["planner"]]:
             f"New direction: {last_revision['replan_direction']}"
         )
 
-    prompt = f"Research query:\n{query}{replan_context}"
+    prompt = f"Research query:\n{query}{replan_context}\n\n"
+    if source_docs:
+        prompt += f"Source Documents (Absolute Truth):\n" + "\n---\n".join(source_docs) + "\n\n"
+    prompt += "Extract key findings, methodologies, and conclusions specifically suitable to be presented to an audience."
+
     result = _call_llm("researcher", prompt, schema=ResearchContextOutput)
 
     now = datetime.now().isoformat()
@@ -108,19 +113,19 @@ def planner_node(state: ResearchState) -> Command[Literal["writer", "researcher"
     prompt = (
         f"Research query:\n{query}\n\n"
         f"Research context:\n{latest_context}\n\n"
-        "Design a comprehensive research plan. If the research context has gaps "
-        "that would prevent writing a quality synthesis, set needs_more_research=true "
-        "and provide specific research_queries."
+        "Design a comprehensive delivery plan with a structured outline (e.g., for a speech, summary, or presentation). "
+        "Focus on narrative flow, clear communication, and grounding in the provided research. "
+        "If the research context has gaps that would prevent creating a high-quality delivery, "
+        "set needs_more_research=true and provide specific research_queries."
     )
-    result = _call_llm("planner", prompt, schema=ResearchPlanOutput)
+    result = _call_llm("planner", prompt, schema=DeliveryPlanOutput)
 
-    plan_dict: ResearchPlan = {
+    plan_dict: DeliveryPlan = {
         "title": result.title,
         "research_context": latest_context,
         "target_audience": result.target_audience,
         "guidelines": result.guidelines,
         "success_criteria": result.success_criteria,
-        "table_of_contents": result.table_of_contents,
         "introduction": result.introduction,
         "sections": [s.model_dump() for s in result.sections],
         "conclusion": result.conclusion,
@@ -162,6 +167,8 @@ def writer_node(state: ResearchState) -> dict:
     session_id = state.get("session_id", "")
 
     is_revision = len(drafts) > 0 and len(revisions) > 0
+    manifests = state.get("artifact_manifests", [])
+    manifest_info = "\n".join([str(m) for m in manifests]) if manifests else "None available."
 
     if is_revision:
         previous_draft = drafts[-1]
@@ -169,13 +176,15 @@ def writer_node(state: ResearchState) -> dict:
         last_critique = critiques[-1] if critiques else {}
 
         prompt = (
-            f"Research plan:\n{plan}\n\n"
+            f"Delivery plan:\n{plan}\n\n"
+            f"Available Visual Artifacts from Source:\n{manifest_info}\n\n"
             f"Current draft (version {previous_draft['version']}):\n{previous_draft['document']}\n\n"
             f"Supervisor feedback:\n{last_revision['feedback']}\n\n"
             f"Priority issues to address: {last_revision['issues']}\n\n"
             f"Full critique details:\n{last_critique}\n\n"
             "Revise the draft to address all identified issues. Produce a complete "
-            "updated document — do not leave placeholders or omit sections."
+            "updated delivery document — do not leave placeholders. "
+            "Ensure you include concise key points, structural narrative, and specific notes for the speaker or reader."
         )
         action = "revision"
         based_on = previous_draft["version"]
@@ -183,10 +192,12 @@ def writer_node(state: ResearchState) -> dict:
         feedback_refs = [last_revision.get("feedback", "")]
     else:
         prompt = (
-            f"Research plan:\n{plan}\n\n"
-            "Write the initial research synthesis document following the plan exactly. "
-            "Answer every research question in each section. Produce a complete, "
-            "well-structured document."
+            f"Delivery plan:\n{plan}\n\n"
+            f"Available Visual Artifacts from Source:\n{manifest_info}\n\n"
+            "Write the initial draft following the plan exactly. "
+            "For each section, produce concise key points and detailed narrative or speaker notes. "
+            "Suggest placements for available visual artifacts. "
+            "Produce a complete, well-structured document suitable for delivery."
         )
         action = "initial"
         based_on = 0
@@ -235,12 +246,20 @@ def critic_node(state: ResearchState) -> dict:
     plan = state.get("plan", {})
     latest_draft = drafts[-1]
     critiques = state.get("critiques", [])
+    source_docs = state.get("source_documents", [])
 
     prompt = (
-        f"Research plan with success criteria:\n{plan}\n\n"
+        f"Delivery plan with success criteria:\n{plan}\n\n"
         f"Draft to review (version {latest_draft['version']}):\n{latest_draft['document']}\n\n"
-        "Review this draft thoroughly. For each issue found, specify the exact "
-        "location, issue type, severity, and a clear description. "
+    )
+    if source_docs:
+        prompt += f"Absolute Source of Truth Documents:\n" + "\n---\n".join(source_docs) + "\n\n"
+
+    prompt += (
+        "ACT AS A STRICT FACT-CHECKER. Review the draft against the delivery plan and the Absolute Source of Truth Documents. "
+        "Compare every claim in the draft against the source documents. "
+        "If a claim is not supported by the source, flag it as a critical 'hallucination' or 'unsupported_claim'. "
+        "For each issue found, specify the exact location, issue type, severity, and a clear description. "
         "Do not rewrite — only identify problems."
     )
     result = _call_llm("critic", prompt, schema=CritiqueOutput)
@@ -319,15 +338,15 @@ def supervisor_node(
 
     prompt = (
         f"Original research query:\n{query}\n\n"
-        f"Research plan and success criteria:\n{plan}\n\n"
+        f"Delivery plan and success criteria:\n{plan}\n\n"
         f"Current draft (version {latest_draft['version']}):\n{latest_draft['document']}\n\n"
         f"Critique summary: {latest_critique['summary']}\n"
         f"Issue counts: {latest_critique['issue_counts']}\n"
         f"Issues:\n{latest_critique['issues']}\n\n"
         f"Iteration: {iteration_count + 1} of {MAX_REVISIONS}\n\n"
-        "Evaluate holistically. Decide: 'accept' if publication-ready, "
+        "Evaluate holistically. Decide: 'accept' if delivery-ready, "
         "'revise' if specific sections need work, or 'replan' if the "
-        "approach is fundamentally flawed."
+        "approach is fundamentally flawed. Pay close attention to whether the Critic's factual issues have been safely resolved."
     )
     result = _call_llm("supervisor", prompt, schema=SupervisorOutput)
 

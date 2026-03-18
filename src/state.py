@@ -38,54 +38,43 @@ class ResearchContextOutput(BaseModel):
     )
 
 
-class SectionDef(BaseModel):
-    """Recursive section definition for a research plan outline."""
-    id: str = Field(description="Section number e.g. '1.0', '2.3'")
-    title: str = Field(description="Section title")
-    research_questions: list[str] = Field(
-        description="Questions this section must answer"
+class ContentBlock(BaseModel):
+    """Definition for a structured block of content (e.g., a slide, a speech section, or a summary paragraph)."""
+    id: str = Field(description="Block identifier e.g. '1', '2'")
+    title: str = Field(description="Block title or main heading")
+    purpose: str = Field(description="Why this block exists and what it should convey")
+    key_points: list[str] = Field(
+        description="Key points or questions this block must address"
     )
-    requirements: list[str] = Field(
-        description="What must be covered in this section"
-    )
-    dependencies: list[str] = Field(
-        default_factory=list,
-        description="IDs of prerequisite sections this builds on",
-    )
-    target_length: str = Field(description="Target length e.g. '500 words'")
-    purpose: str = Field(description="Why this section exists in the plan")
-    sub_sections: list[SectionDef] = Field(
-        default_factory=list, description="Nested sub-sections"
+    visual_requirements: str = Field(
+        description="What images or tables from the manifest should be included, if any"
     )
 
 
-class ResearchPlanOutput(BaseModel):
+class DeliveryPlanOutput(BaseModel):
     """LLM output schema for the Planner node.
 
-    Produces a structured research plan with sections, writing guidelines,
+    Produces a structured delivery plan (presentation, speech, or summary), writing guidelines,
     and routing decision (proceed to write or request more research).
     """
-    title: str = Field(description="Title of the research synthesis")
+    title: str = Field(description="Title of the delivery")
     target_audience: str = Field(
-        description="Intended audience e.g. 'academic', 'general', 'practitioner'"
+        description="Intended audience e.g. 'academic', 'general', 'executive', 'public'"
     )
     guidelines: dict = Field(
-        description="Writing guidelines: tone, formality, use of examples, etc."
+        description="Delivery guidelines: tone, visual layout, verbosity, structure, etc."
     )
     success_criteria: list[str] = Field(
-        description="Measurable criteria for a successful synthesis"
-    )
-    table_of_contents: list[str] = Field(
-        description="High-level summary of article structure"
+        description="Measurable criteria for a successful delivery"
     )
     introduction: str = Field(
-        description="Background context and motivation for the draft"
+        description="Background context and motivation for the delivery"
     )
-    sections: list[SectionDef] = Field(
-        description="Ordered section definitions with nested structure"
+    sections: list[ContentBlock] = Field(
+        description="Ordered content blocks defining the structure"
     )
     conclusion: str = Field(
-        description="Summary of the research plan with respect to the user query"
+        description="Summary of the flow with respect to the user query"
     )
     needs_more_research: bool = Field(
         description="True if knowledge gaps require routing back to Researcher"
@@ -104,8 +93,8 @@ class IssueItem(BaseModel):
     )
     type: str = Field(
         description=(
-            "Issue category: logical_gap, unsupported_claim, missing_angle, "
-            "structural, clarity, evidence_quality, contradiction"
+            "Issue category: factual_inaccuracy, hallucination, unsupported_claim, "
+            "visual_mismatch, logical_gap, structural, clarity, contradiction"
         )
     )
     severity: str = Field(description="Severity level: critical, major, or minor")
@@ -179,14 +168,13 @@ class ResearchContext(TypedDict):
     additional_notes: list[str]
 
 
-class ResearchPlan(TypedDict):
-    """Structured research plan produced by the Planner."""
+class DeliveryPlan(TypedDict):
+    """Structured delivery plan produced by the Planner."""
     title: str
     research_context: dict
     target_audience: str
     guidelines: dict
     success_criteria: list[str]
-    table_of_contents: list[str]
     introduction: str
     sections: list[dict]
     conclusion: str
@@ -259,9 +247,13 @@ class ResearchState(TypedDict):
     # coordination counter for the revision loop
     iteration_count: int
 
+    # input context for source of truth checking
+    source_documents: list[str]
+    artifact_manifests: list[dict]
+
     # append-only artifact histories
     research_context: Annotated[list[ResearchContext], operator.add]
-    plan: ResearchPlan
+    plan: DeliveryPlan
     drafts: Annotated[list[Draft], operator.add]
     critiques: Annotated[list[Critique], operator.add]
     revisions: Annotated[list[Revision], operator.add]

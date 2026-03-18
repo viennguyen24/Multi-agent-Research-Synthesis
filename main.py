@@ -41,6 +41,12 @@ def main():
         "session_id": str(uuid4()),
         "created_at": datetime.now().isoformat(),
         "iteration_count": 0,
+        "source_documents": [
+            "Mock document text: Distributed systems require trade-offs. The CAP theorem states that a distributed data store can only guarantee two out of three: Consistency, Availability, Partition tolerance. In practice, Partition tolerance is a necessity, leaving the choice between Consistency and Availability."
+        ],
+        "artifact_manifests": [
+            {"image_id": "img_001", "caption": "The CAP Theorem Triangle"}
+        ],
         "research_context": [],
         "plan": {},
         "drafts": [],
