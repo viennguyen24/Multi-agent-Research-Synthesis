@@ -15,7 +15,9 @@ from google.genai import types
 T = TypeVar("T", bound=BaseModel)
 import re
 
-from src.util import DEFAULT_MODEL
+DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.2-3b-instruct:free"
+DEFAULT_OLLAMA_MODEL = "qwen3.5:397b-cloud"
+DEFAULT_GEMINI_MODEL="gemini-2.5-flash-lite"
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=str(_PROJECT_ROOT / ".env"))
@@ -178,21 +180,21 @@ _PROVIDERS: dict[Provider, dict] = {
     Provider.OPENROUTER: {
         "cls": OpenRouterLLM,
         "defaults": {
-            "model": f"{DEFAULT_MODEL}:free",
+            "model": DEFAULT_OPENROUTER_MODEL,
             "base_url": os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         }
     },
     Provider.OLLAMA: {
         "cls": OllamaLLM,
         "defaults": {
-            "model": f"{DEFAULT_MODEL}-cloud",
+            "model": DEFAULT_OLLAMA_MODEL,
             "base_url": os.environ.get("OLLAMA_BASE_URL", "https://ollama.com"),
         }
     },
     Provider.GOOGLE_AI_STUDIO: {
         "cls": GeminiLLM,
         "defaults": {
-            "model": "gemini-2.5-flash-lite",
+            "model": DEFAULT_GEMINI_MODEL,
         }
     },
 }

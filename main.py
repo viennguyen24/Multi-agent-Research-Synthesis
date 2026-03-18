@@ -10,7 +10,7 @@ from src.processing.document._common import _slugify
 from src.llm import GLOBAL_CONFIG, Provider
 from src.logging.logger import AgentLogger
 
-DEFAULT_QUERY = "Explain the CAP theorem in distributed systems"
+DEFAULT_QUERY = "Explain what Transformers are and how they are so important to AI"
 DEFAULT_SOURCE_PDF = "Transformers.pdf"
 
 _PROVIDER_FLAGS = {
@@ -26,6 +26,7 @@ def _parse_args() -> argparse.Namespace:
     group.add_argument("--openrouter", action="store_true", help="Use OpenRouter provider")
     group.add_argument("--gemini",     action="store_true", help="Use Google AI Studio (Gemini) provider (default)")
     parser.add_argument("--query", type=str, default=DEFAULT_QUERY, help="Research query")
+    parser.add_argument("--model", type=str, help="Override the default model for the provider")
     parser.add_argument(
         "--pdf",
         type=str,
@@ -55,6 +56,8 @@ def main() -> None:
         Provider.GOOGLE_AI_STUDIO,
     )
     GLOBAL_CONFIG.provider = selected
+    if args.model:
+        GLOBAL_CONFIG.model = args.model
 
     pdf_path = Path(args.pdf)
     if not pdf_path.exists():
