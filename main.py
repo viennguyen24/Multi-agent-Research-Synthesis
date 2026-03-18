@@ -2,7 +2,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from src.database import get_database_provider
+from src.memory.database import get_database_provider
 from src.graph import build_graph
 import src.llm
 from src.processing.document import DocProcessor
