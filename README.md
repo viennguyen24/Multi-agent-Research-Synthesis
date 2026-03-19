@@ -44,7 +44,7 @@ The codebase uses `langfuse` which will automatically pick up these environment 
 
 ### 5. (Optional) Change model
 
-Edit `DEFAULT_MODEL` in `src/util.py`.
+Edit `--model` argument when running project.
 
 ## Run
 

@@ -15,7 +15,9 @@ from google.genai import types
 T = TypeVar("T", bound=BaseModel)
 import re
 
-from src.util import DEFAULT_MODEL
+DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.2-3b-instruct:free"
+DEFAULT_OLLAMA_MODEL = "qwen3.5:397b-cloud"
+DEFAULT_GEMINI_MODEL="gemini-2.5-flash-lite"
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=str(_PROJECT_ROOT / ".env"))
@@ -38,7 +40,7 @@ class LLMConfig:
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
-    think: bool | None = None
+    think: bool | None = True
     base_url: str | None = None
     api_key: str | None = None
 
@@ -60,7 +62,7 @@ class OpenRouterLLM:
             base_url=config.base_url,
         )
 
-    def complete(self, messages: list[dict], schema: type[T] | None = None, strip_think: bool = True, **kwargs) -> str | T:
+    def complete(self, messages: list[dict], schema: type[T] | None = None, **kwargs) -> str | T:
         req_params = {
             "model": self.config.model,
             "messages": messages,
@@ -77,8 +79,18 @@ class OpenRouterLLM:
             raise NotImplementedError("Structured output not yet supported for OpenRouter")
 
         resp = self._client.chat.completions.create(**req_params)
-        raw = resp.choices[0].message.content
-        return _strip_think_block(raw) if strip_think else raw
+        msg = resp.choices[0].message
+        raw = msg.content
+        
+        # OpenRouter / OpenAI SDK might separate reasoning for models like DeepSeek-R1
+        reasoning = getattr(msg, "reasoning", None) or getattr(msg, "reasoning_content", None)
+        if not reasoning and hasattr(msg, "model_extra") and msg.model_extra:
+             reasoning = msg.model_extra.get("reasoning") or msg.model_extra.get("reasoning_content")
+             
+        if reasoning:
+            raw = f"<think>\n{reasoning}\n</think>\n\n{raw or ''}"
+            
+        return raw
 
 class OllamaLLM:
     def __init__(self, config: LLMConfig):
@@ -89,7 +101,7 @@ class OllamaLLM:
             headers={'Authorization': f'Bearer {api_key}'}
         )
 
-    def complete(self, messages: list[dict], schema: type[T] | None = None, strip_think: bool = True, **kwargs) -> str | T:
+    def complete(self, messages: list[dict], schema: type[T] | None = None, **kwargs) -> str | T:
         """Invoke Ollama chat. If schema is provided, constrain output to JSON schema."""
         options = {}
         temp = kwargs.get("temperature", self.config.temperature)
@@ -111,8 +123,17 @@ class OllamaLLM:
         if schema is not None:
             req_params["format"] = schema.model_json_schema()
 
+        think_opt = kwargs.get("think", getattr(self.config, "think", True))
+        if think_opt is not None:
+            req_params["think"] = think_opt
+
         resp = self._client.chat(**req_params)
-        raw_content = _strip_think_block(resp.message.content) if strip_think else resp.message.content
+        raw_content = resp.message.content
+        
+        # If the SDK separated reasoning into `.thinking`, bring it back into the content so it gets traced
+        thinking_text = getattr(resp.message, "thinking", None)
+        if thinking_text:
+            raw_content = f"<think>\n{thinking_text}\n</think>\n\n{raw_content}"
         if schema is not None:
             return schema.model_validate_json(raw_content)
         return raw_content
@@ -163,13 +184,31 @@ class GeminiLLM:
             gen_config.response_mime_type = "application/json"
             gen_config.response_json_schema = schema.model_json_schema()
 
+        think_opt = kwargs.get("think", getattr(self.config, "think", True))
+        if think_opt:
+            gen_config.thinking_config = types.ThinkingConfig(include_thoughts=True)
+
         response = self._client.models.generate_content(
             model=self.config.model,
             contents=user_contents,
             config=gen_config,
         )
 
-        raw_content = response.text
+        thinking_text = ""
+        answer_text = ""
+        for part in response.candidates[0].content.parts:
+            if not part.text:
+                continue
+            if getattr(part, "thought", False):
+                thinking_text += part.text + "\n"
+            else:
+                answer_text += part.text + "\n"
+
+        if thinking_text:
+            raw_content = f"<think>\n{thinking_text.strip()}\n</think>\n\n{answer_text.strip()}"
+        else:
+            raw_content = answer_text.strip()
+            
         if schema is not None:
             return schema.model_validate_json(raw_content)
         return raw_content
@@ -178,21 +217,21 @@ _PROVIDERS: dict[Provider, dict] = {
     Provider.OPENROUTER: {
         "cls": OpenRouterLLM,
         "defaults": {
-            "model": f"{DEFAULT_MODEL}:free",
+            "model": DEFAULT_OPENROUTER_MODEL,
             "base_url": os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         }
     },
     Provider.OLLAMA: {
         "cls": OllamaLLM,
         "defaults": {
-            "model": f"{DEFAULT_MODEL}-cloud",
+            "model": DEFAULT_OLLAMA_MODEL,
             "base_url": os.environ.get("OLLAMA_BASE_URL", "https://ollama.com"),
         }
     },
     Provider.GOOGLE_AI_STUDIO: {
         "cls": GeminiLLM,
         "defaults": {
-            "model": "gemini-2.5-flash-lite",
+            "model": DEFAULT_GEMINI_MODEL,
         }
     },
 }
