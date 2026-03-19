@@ -2,6 +2,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
+import os
 from src.memory.database import get_database_provider
 from src.graph import build_graph
 import src.llm
@@ -44,13 +45,30 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Pause after document extraction and require user confirmation to continue",
     )
+    parser.add_argument(
+        "--logging",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable Langfuse logging"
+    )
     return parser.parse_args()
 
+def _get_callbacks(args):
+    callbacks = []
+    logger = None
 
-def main() -> None:
-    args = _parse_args()
+    if args.logging is False:
+        os.environ["LANGFUSE_ENABLED"] = "false"
+        from langfuse.decorators import langfuse_context
+        langfuse_context.configure(enabled=False)
+    else:
+        logger = AgentLogger()
+        langfuse_handler = logger.get_langgraph_handler()
+        callbacks.append(langfuse_handler)
+    return callbacks, logger
 
-    # resolve which provider flag was set (fallback Google AI studio)
+def _configure_llm(args: argparse.Namespace) -> None:
+    # resolve which provider flag was set
     selected = next(
         (prov for flag, prov in _PROVIDER_FLAGS.items() if getattr(args, flag)),
         Provider.GOOGLE_AI_STUDIO,
@@ -59,6 +77,7 @@ def main() -> None:
     if args.model:
         GLOBAL_CONFIG.model = args.model
 
+def _process_document(args: argparse.Namespace) -> tuple[Any, str]:
     pdf_path = Path(args.pdf)
     if not pdf_path.exists():
         sys.exit(f"error: PDF not found: {pdf_path}")
@@ -100,13 +119,10 @@ def main() -> None:
         f"(images={artifacts.image_count}, tables={artifacts.table_count}, "
         f"equations={artifacts.equation_count}, chunks={artifacts.chunk_count})"
     )
+    return artifacts, preprocessing_message
 
-    graph = build_graph()
-
-    logger = AgentLogger()
-    langfuse_handler = logger.get_langgraph_handler()
-
-    result = graph.invoke({
+def _build_initial_state(args: argparse.Namespace, artifacts: Any, preprocessing_message: str) -> dict:
+    return {
         "query": args.query or DEFAULT_QUERY,
         "source_chunks": artifacts.source_chunks,
         "selected_chunk_indices": [],
@@ -117,7 +133,19 @@ def main() -> None:
         "iteration": 0,
         "next": "continue",
         "messages": [preprocessing_message],
-    }, config={"callbacks": [langfuse_handler]})
+    }
+
+def main() -> None:
+    args = _parse_args()
+
+    _configure_llm(args)
+    callbacks, logger = _get_callbacks(args)
+
+    artifacts, preprocessing_message = _process_document(args)
+    initial_state = _build_initial_state(args, artifacts, preprocessing_message)
+
+    graph = build_graph()
+    result = graph.invoke(initial_state, config={"callbacks": callbacks})
 
     print("\n--- Agent Log ---")
     for msg in result.get("messages", []):
@@ -126,7 +154,8 @@ def main() -> None:
     print("\n--- Final Draft ---")
     print(result.get("draft", "(no draft produced)"))
     
-    logger.flush()
+    if logger:
+        logger.flush()
 
 
 if __name__ == "__main__":
