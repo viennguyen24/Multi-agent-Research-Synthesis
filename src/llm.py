@@ -130,12 +130,9 @@ class OllamaLLM:
         resp = self._client.chat(**req_params)
         raw_content = resp.message.content
         
-        # If the SDK separated reasoning into `.thinking`, bring it back into the content so it gets traced
         thinking_text = getattr(resp.message, "thinking", None)
         if thinking_text:
             raw_content = f"<think>\n{thinking_text}\n</think>\n\n{raw_content}"
-        if schema is not None:
-            return schema.model_validate_json(raw_content)
         return raw_content
 
 class GeminiLLM:
@@ -209,8 +206,6 @@ class GeminiLLM:
         else:
             raw_content = answer_text.strip()
             
-        if schema is not None:
-            return schema.model_validate_json(raw_content)
         return raw_content
 
 _PROVIDERS: dict[Provider, dict] = {
