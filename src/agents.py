@@ -4,22 +4,16 @@ import json
 from src.state import ResearchState
 from src.llm import get_llm
 from src.util import AGENT_ROLES, MAX_ITERATIONS
+from src.llm import _strip_think_block
 from langfuse.decorators import observe
 
-
 @observe(as_type="generation")
-def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
-    print(f"  -> requesting {role}...", flush=True)
-    messages = [
-        {"role": "system", "content": AGENT_ROLES[role]},
-        {"role": "user", "content": user_prompt},
-    ]
+def _generate_raw(role: str, messages: list[dict], max_retries: int = 2) -> str:
     for attempt in range(max_retries):
         try:
             llm = get_llm()
-            response_text = llm.complete(messages)
-            print(f"  OK {role} responded ({len(response_text)} chars)", flush=True)
-            return response_text
+            raw = llm.complete(messages)
+            return raw
         except Exception as e:
             print(f"  [!] LLM connection error on attempt {attempt + 1}/{max_retries}: {e}")
             if attempt == max_retries - 1:
@@ -27,6 +21,15 @@ def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
             # Sleep before retrying to give the network/API time to recover
             time.sleep(2 ** attempt)
 
+def _call_llm(role: str, user_prompt: str, max_retries: int = 2) -> str:
+    print(f"  -> requesting {role}...", flush=True)
+    messages = [
+        {"role": "system", "content": AGENT_ROLES[role]},
+        {"role": "user", "content": user_prompt},
+    ]
+    raw_response = _generate_raw(role, messages, max_retries)
+    print(f"  OK {role} responded ({len(raw_response)} chars raw)", flush=True)
+    return _strip_think_block(raw_response)
 
 def _manifest_summary(state: ResearchState) -> str:
     manifest = state.get("manifest_json")
