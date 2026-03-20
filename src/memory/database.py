@@ -12,13 +12,6 @@ from src.processing.document.schema import (
     ExtractionManifest,
     ExtractionResult,
 )
-from src.memory.working_context import SESSION_TABLES, WM_SCHEMA_SQL
-
-SESSION_SETUP_QUERIES = [q.strip() for q in WM_SCHEMA_SQL.split(";") if q.strip()]
-
-# Reverse the order for dropping to respect foreign keys (if any)
-SESSION_DROP_QUERIES = [f"DROP TABLE IF EXISTS {table}" for table in reversed(SESSION_TABLES)]
-
 
 class DatabaseProvider(ABC):
     """
@@ -142,10 +135,6 @@ class SQLiteProvider(DatabaseProvider):
                 )
             ''')
 
-            # Working Memory setup
-            for query in SESSION_SETUP_QUERIES:
-                cursor.execute(query)
-            
             conn.commit()
 
     def reset(self) -> None:
@@ -157,10 +146,6 @@ class SQLiteProvider(DatabaseProvider):
             cursor.execute("DROP TABLE IF EXISTS tables")
             cursor.execute("DROP TABLE IF EXISTS images")
             cursor.execute("DROP TABLE IF EXISTS documents")
-            
-            for query in SESSION_DROP_QUERIES:
-                cursor.execute(query)
-            
             conn.commit()
         self.setup()
 
