@@ -1,5 +1,6 @@
 import argparse
 import sys
+from typing import Any
 import time
 from pathlib import Path
 import os
@@ -8,6 +9,8 @@ from src.graph import build_graph
 import src.llm
 from src.processing.document import DocProcessor
 from src.processing.document._common import _slugify
+import uuid
+from datetime import datetime, timezone
 from src.llm import GLOBAL_CONFIG, Provider
 from src.logging.logger import AgentLogger
 
@@ -121,18 +124,23 @@ def _process_document(args: argparse.Namespace) -> tuple[Any, str]:
     )
     return artifacts, preprocessing_message
 
-def _build_initial_state(args: argparse.Namespace, artifacts: Any, preprocessing_message: str) -> dict:
+def _build_initial_state(args: argparse.Namespace, preprocessing_message: str, artifacts: Any) -> dict:
     return {
-        "query": args.query or DEFAULT_QUERY,
-        "source_chunks": artifacts.source_chunks,
-        "selected_chunk_indices": [],
-        "manifest_json": artifacts.manifest_json,
-        "plan": "",
-        "draft": "",
-        "critique": "",
-        "iteration": 0,
-        "next": "continue",
-        "messages": [preprocessing_message],
+        'query':            args.query or DEFAULT_QUERY,
+        'session_id':       str(uuid.uuid4()),
+        'created_at':       datetime.now(timezone.utc).isoformat(),
+        'revision_count':   0,
+        'replan_count':     0,
+        'plan':             None,
+        'draft':            None,
+        'critique':         None,
+        'document_context': "",
+        'source_chunks':    artifacts.source_chunks if artifacts else [],
+        'doc_id':           artifacts.manifest_json.doc_id if artifacts else "unknown",
+        'revision_history': [],
+        'replan_history':   [],
+        'messages':         [preprocessing_message],
+        'errors':           [],
     }
 
 def main() -> None:
@@ -142,17 +150,33 @@ def main() -> None:
     callbacks, logger = _get_callbacks(args)
 
     artifacts, preprocessing_message = _process_document(args)
-    initial_state = _build_initial_state(args, artifacts, preprocessing_message)
+    initial_state = _build_initial_state(args, preprocessing_message, artifacts)
 
     graph = build_graph()
-    result = graph.invoke(initial_state, config={"callbacks": callbacks})
+    
+    final_state = initial_state
+    try:
+        # Use streaming to capture the state at each step, allowing us to recover logs if a crash occurs
+        for event in graph.stream(
+            initial_state, 
+            config={"callbacks": callbacks},
+            stream_mode="values"
+        ):
+            final_state = event
+    except Exception as e:
+        print(f"\n[!] Research Graph encountered an error mid-flight: {e}")
+        print("    Attempting to recover partial logs...")
 
     print("\n--- Agent Log ---")
-    for msg in result.get("messages", []):
+    for msg in final_state.get("messages", []):
         print(msg)
 
-    print("\n--- Final Draft ---")
-    print(result.get("draft", "(no draft produced)"))
+    print("\n--- Final Draft (Last Known State) ---")
+    final_draft = final_state.get('draft')
+    if final_draft:
+        print(final_draft['document'])
+    else:
+        print('(no draft produced)')
     
     if logger:
         logger.flush()

@@ -1,26 +1,54 @@
 from langgraph.graph import StateGraph, END
-
+from langgraph.types import Command
 from src.state import ResearchState
-from src.agents import lead_researcher_node, editor_node, critic_node
+from src.agents import planner_node, writer_node, critic_node, supervisor_node
+from src.util import MAX_REVISIONS, MAX_REPLANS
 
-def _route_after_lead(state: ResearchState) -> str:
-    return state["next"]
+class ResearchGraph:
+    def __init__(self):
+        self._graph = self._build()
 
-def build_graph():
-    graph = StateGraph(ResearchState)
+    def _build(self):
+        g = StateGraph(ResearchState)
+        g.add_node('planner',    self._planner_with_guard)
+        g.add_node('writer',     self._writer_with_guard)
+        g.add_node('critic',     critic_node)
+        g.add_node('supervisor', supervisor_node)
+        
+        g.set_entry_point('planner')
+        
+        g.add_edge('planner', 'writer')
+        g.add_edge('writer',  'critic')
+        g.add_edge('critic',  'supervisor')
+        
+        # supervisor routes via Command — no conditional_edges needed
+        return g.compile()
 
-    graph.add_node("lead_researcher", lead_researcher_node)
-    graph.add_node("editor", editor_node)
-    graph.add_node("critic", critic_node)
+    def _planner_with_guard(self, state: ResearchState) -> Command:
+        replan_count = state.get('replan_count', 0)
+        if replan_count >= MAX_REPLANS:
+            msg = f'[planner] failure: MAX_REPLANS ({MAX_REPLANS}) reached'
+            return Command(
+                update={'errors': [{'node': 'planner', 'error': 'MAX_REPLANS reached'}], 'messages': [msg]},
+                goto=END,
+            )
+        return planner_node(state)
 
-    graph.set_entry_point("lead_researcher")
+    def _writer_with_guard(self, state: ResearchState) -> Command:
+        revision_count = state.get('revision_count', 0)
+        if revision_count >= MAX_REVISIONS:
+            msg = f'[writer] failure: MAX_REVISIONS ({MAX_REVISIONS}) reached'
+            return Command(
+                update={'errors': [{'node': 'writer', 'error': 'MAX_REVISIONS reached'}], 'messages': [msg]},
+                goto=END,
+            )
+        return writer_node(state)
 
-    graph.add_conditional_edges(
-        "lead_researcher",
-        _route_after_lead,
-        {"continue": "editor", "done": END},
-    )
-    graph.add_edge("editor", "critic")
-    graph.add_edge("critic", "lead_researcher")
+    def invoke(self, initial_state: dict, config: dict = None):
+        return self._graph.invoke(initial_state, config=config)
 
-    return graph.compile()
+    def stream(self, initial_state: dict, config: dict = None, stream_mode: str = "values"):
+        return self._graph.stream(initial_state, config=config, stream_mode=stream_mode)
+
+def build_graph() -> ResearchGraph:
+    return ResearchGraph()
