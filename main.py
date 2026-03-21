@@ -15,7 +15,7 @@ from src.llm import GLOBAL_CONFIG, Provider
 from src.logging.logger import AgentLogger
 
 DEFAULT_QUERY = "Explain what Transformers are and how they are so important to AI"
-DEFAULT_SOURCE_PDF = "Transformers.pdf"
+DEFAULT_SOURCE_PDF = "./.samples/Transformers.pdf"
 
 _PROVIDER_FLAGS = {
     "ollama":     Provider.OLLAMA,
