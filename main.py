@@ -4,7 +4,7 @@ from typing import Any
 import time
 from pathlib import Path
 import os
-from src.memory.database import get_database_provider
+from src.memory import get_database
 from src.graph import build_graph
 import src.llm
 from src.processing.document import DocProcessor
@@ -89,18 +89,17 @@ def _process_document(args: argparse.Namespace) -> tuple[Any, str]:
     
     _t0 = time.perf_counter()
     doc_id = _slugify(pdf_path.stem)
-    db = get_database_provider()
+    db = get_database()
     
     if args.use_db:
-        db.setup()
-        artifacts = db.load_result(doc_id)
+        artifacts = db.load_document(doc_id)
         if not artifacts:
             sys.exit(f"error: No cached database entry found for doc_id '{doc_id}'. The existing processor.db does not match the requested PDF. Please run without --use-db to re-process the document.")
     else:
         db.reset()
         processor = DocProcessor()
         artifacts = processor.process_document(str(pdf_path))
-        db.save_result(artifacts)
+        db.save_document(artifacts)
         
     _pdf_elapsed = time.perf_counter() - _t0
     
