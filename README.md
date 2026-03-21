@@ -19,8 +19,9 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Note: installing `docling` can take longer than the previous setup because it brings document-processing dependencies.
+Note: installing `docling` and `sqlite-vec` can take longer because they bring specialized document-processing and vector-search dependencies.
 Also Docling requires 1.5-2GB for its custom model.
+sqlite-vec provides fast, local vector similarity search directly within SQLite.
 ### 3. API keys
 
 ```bash
