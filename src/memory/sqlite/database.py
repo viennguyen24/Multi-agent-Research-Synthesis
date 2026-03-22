@@ -4,13 +4,13 @@ import json
 import sqlite3
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import sqlite_vec
 
 from src.processing.document.schema import (
     ExtractionResult,
     ExtractedChunk,
-    ExtractionManifest,
     ExtractedImage,
     ExtractedTable,
     ExtractedEquation,
@@ -108,170 +108,229 @@ class SQLiteDatabase(DatabaseProvider):
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
         self.setup()
 
-    def save_document(self, result: ExtractionResult) -> None:
-        """Persists an ExtractionResult to the database."""
-        manifest = result.manifest_json
-        doc_id = manifest.doc_id
-        
-        # Calculate content hash if not present (using source_pdf_path + current time as fallback)
-        # In a real scenario, we'd hash the file bytes.
-        content_hash = hashlib.sha256(manifest.source_pdf_path.encode()).hexdigest()
+    def write_extraction_result(
+        self, result: ExtractionResult, embeddings: Any
+    ) -> None:
+        """
+        Unified entry point for relational + vector writes.
+        Executes all inserts within a single transaction.
+        """
+        content_hash = hashlib.sha256(result.source_path.encode()).hexdigest()
 
         with self._conn:
-            # 1. Save Document
+            # 1. Document
             self._conn.execute(
                 """
-                INSERT OR REPLACE INTO documents 
-                (id, source_path, filename, markdown, page_count, content_hash, docling_schema_version) 
+                INSERT OR IGNORE INTO documents
+                (id, source_path, filename, markdown, page_count, content_hash, docling_schema_version)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    doc_id,
-                    manifest.source_pdf_path,
-                    Path(manifest.source_pdf_path).name,
-                    "", # Temporary: empty markdown as it's not in ExtractionResult
-                    0,  # Temporary: page count not directly in result
+                    result.doc_id,
+                    result.source_path,
+                    Path(result.source_path).name,
+                    result.markdown,
+                    result.page_count,
                     content_hash,
-                    None
+                    result.docling_schema_version,
                 )
             )
 
-            # 2. Save Images
-            for img in manifest.images:
-                self._conn.execute(
+            # 2. Images
+            if result.images:
+                self._conn.executemany(
                     """
-                    INSERT OR REPLACE INTO images 
-                    (id, document_id, mime_type, base64_data, page_number, caption, bbox_json, annotation_json) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (img.id, doc_id, img.mime_type, img.base64_data, img.page, img.caption, None, None)
-                )
-
-            # 3. Save Tables
-            for tbl in manifest.tables:
-                self._conn.execute(
-                    """
-                    INSERT OR REPLACE INTO tables 
-                    (id, document_id, html_content, page_number, caption, bbox_json, col_count, row_count) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (tbl.id, doc_id, tbl.html_content, tbl.page, tbl.title, None, None, None)
-                )
-
-            # 4. Save Equations
-            for eq in manifest.equations:
-                self._conn.execute(
-                    """
-                    INSERT OR REPLACE INTO equations 
-                    (id, document_id, text, orig, page_number, bbox_json, caption) 
+                    INSERT OR IGNORE INTO images
+                    (id, document_id, mime_type, base64_data, page_number, caption, contextualized_text)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (eq.id, doc_id, eq.latex_or_text, None, eq.page, None, None)
+                    [
+                        (
+                            img.id,
+                            result.doc_id,
+                            img.mime_type,
+                            img.base64_data,
+                            img.page,
+                            img.caption,
+                            img.contextualized_text,
+                        )
+                        for img in result.images
+                    ]
                 )
 
-            # 5. Save Text Chunks
-            for idx, chunk in enumerate(result.source_chunks):
-                chunk_id = f"{doc_id}_chunk_{idx:04d}"
-                chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
-                
-                self._conn.execute(
+            # 3. Tables
+            if result.tables:
+                self._conn.executemany(
                     """
-                    INSERT OR REPLACE INTO text_chunks 
-                    (id, document_id, text, headings_json, captions_json, page_numbers_json, 
-                     doc_item_labels_json, chunk_index, content_hash) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR IGNORE INTO tables
+                    (id, document_id, html_content, page_number, caption, contextualized_text, col_count, row_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        chunk_id,
-                        doc_id,
-                        chunk.text,
-                        json.dumps(chunk.headings),
-                        json.dumps(chunk.captions),
-                        json.dumps(chunk.page_numbers),
-                        json.dumps([]), # doc_item_labels_json not directly available
-                        idx,
-                        chunk_hash
-                    )
+                    [
+                        (
+                            tbl.id,
+                            result.doc_id,
+                            tbl.html_content,
+                            tbl.page,
+                            tbl.title,
+                            tbl.contextualized_text,
+                            tbl.col_count,
+                            tbl.row_count,
+                        )
+                        for tbl in result.tables
+                    ]
                 )
+
+            # 4. Equations
+            if result.equations:
+                self._conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO equations
+                    (id, document_id, text, page_number, contextualized_text, caption)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            eq.id,
+                            result.doc_id,
+                            eq.latex_or_text,
+                            eq.page,
+                            eq.contextualized_text,
+                            eq.caption,
+                        )
+                        for eq in result.equations
+                    ]
+                )
+
+            # 5. Text Chunks
+            if result.source_chunks:
+                self._conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO text_chunks
+                    (id, document_id, text, contextualized_text, headings_json,
+                     page_numbers_json, doc_item_labels_json, chunk_index)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            chunk.id,
+                            result.doc_id,
+                            chunk.text,
+                            chunk.contextualized_text,
+                            json.dumps(chunk.headings),
+                            json.dumps(chunk.page_numbers),
+                            json.dumps(chunk.doc_item_labels),
+                            idx,
+                        )
+                        for idx, chunk in enumerate(result.source_chunks)
+                    ]
+                )
+
+            # 6. Vectors
+            if embeddings:
+                self._write_vectors(embeddings)
+
+    def _write_vectors(self, embeddings: Any) -> None:
+        import struct
+
+        all_vecs = (
+            embeddings.chunk_embeddings +
+            embeddings.image_embeddings +
+            embeddings.table_embeddings +
+            embeddings.equation_embeddings
+        )
+
+        if not all_vecs:
+            return
+
+        self._conn.executemany(
+            "INSERT INTO text_chunks_vec (chunk_id, embedding) VALUES (?, vec_f32(?))",
+            [(id_, struct.pack(f"{len(vec)}f", *vec)) for id_, vec in all_vecs]
+        )
+
+    def save_document(self, result: ExtractionResult) -> None:
+        """Wrapper for write_extraction_result without embeddings."""
+        self.write_extraction_result(result, None)
 
     def load_document(self, doc_id: str) -> ExtractionResult | None:
-        """Loads an ExtractionResult from the database."""
-        # 1. Load Document
-        doc_row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
-        if not doc_row:
+        """Reconstructs an ExtractionResult from various tables."""
+        row = self._conn.execute(
+            "SELECT * FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        if not row:
             return None
 
-        # 2. Load Images
-        img_rows = self._conn.execute("SELECT * FROM images WHERE document_id = ?", (doc_id,)).fetchall()
+        # Load chunks
+        chunk_rows = self._conn.execute(
+            "SELECT * FROM text_chunks WHERE document_id = ? ORDER BY chunk_index", (doc_id,)
+        ).fetchall()
+        chunks = [
+            ExtractedChunk(
+                id=r["id"],
+                text=r["text"],
+                headings=json.loads(r["headings_json"]),
+                page_numbers=json.loads(r["page_numbers_json"]),
+                doc_item_labels=json.loads(r["doc_item_labels_json"]),
+                contextualized_text=r["contextualized_text"],
+            )
+            for r in chunk_rows
+        ]
+
         images = [
             ExtractedImage(
-                id=row["id"],
-                mime_type=row["mime_type"],
-                base64_data=row["base64_data"],
-                page=row["page_number"],
-                caption=row["caption"] or ""
-            ) for row in img_rows
+                id=r["id"],
+                mime_type=r["mime_type"],
+                base64_data=r["base64_data"],
+                page=r["page_number"],
+                caption=r["caption"] or "",
+                contextualized_text=r["contextualized_text"],
+            )
+            for r in self._conn.execute("SELECT * FROM images WHERE document_id = ?", (doc_id,)).fetchall()
         ]
 
-        # 3. Load Tables
-        tbl_rows = self._conn.execute("SELECT * FROM tables WHERE document_id = ?", (doc_id,)).fetchall()
         tables = [
             ExtractedTable(
-                id=row["id"],
-                html_content=row["html_content"],
-                page=row["page_number"],
-                title=row["caption"] or ""
-            ) for row in tbl_rows
+                id=r["id"],
+                html_content=r["html_content"],
+                page=r["page_number"],
+                title=r["caption"] or "",
+                contextualized_text=r["contextualized_text"],
+                col_count=r["col_count"],
+                row_count=r["row_count"],
+            )
+            for r in self._conn.execute("SELECT * FROM tables WHERE document_id = ?", (doc_id,)).fetchall()
         ]
 
-        # 4. Load Equations
-        eq_rows = self._conn.execute("SELECT * FROM equations WHERE document_id = ?", (doc_id,)).fetchall()
         equations = [
             ExtractedEquation(
-                id=row["id"],
-                latex_or_text=row["text"],
-                display_mode="block", # Defaulting as not stored
-                page=row["page_number"],
-                markdown_anchor=f"[[eq:{row['id']}]]"
-            ) for row in eq_rows
+                id=r["id"],
+                latex_or_text=r["text"],
+                display_mode="block",
+                page=r["page_number"],
+                contextualized_text=r["contextualized_text"],
+                caption=r["caption"] or "",
+            )
+            for r in self._conn.execute("SELECT * FROM equations WHERE document_id = ?", (doc_id,)).fetchall()
         ]
 
-        # 5. Load Chunks
-        chunk_rows = self._conn.execute(
-            "SELECT * FROM text_chunks WHERE document_id = ? ORDER BY chunk_index", 
-            (doc_id,)
-        ).fetchall()
-        source_chunks = [
-            ExtractedChunk(
-                text=row["text"],
-                contextualized_text=row["text"], # Fallback
-                headings=json.loads(row["headings_json"]),
-                captions=json.loads(row["captions_json"]),
-                page_numbers=json.loads(row["page_numbers_json"]),
-                bboxes=[] # Not stored
-            ) for row in chunk_rows
-        ]
-
-        # 6. Reconstruct Manifest (References are missing in current schema, we'd need a table for them)
-        # For now, minimal reconstruction
-        manifest = ExtractionManifest(
+        return ExtractionResult(
             doc_id=doc_id,
-            source_pdf_path=doc_row["source_path"],
-            markdown_path="",
+            source_path=row["source_path"],
+            markdown=row["markdown"],
+            source_chunks=chunks,
             images=images,
             tables=tables,
             equations=equations,
-            references=[] # Missing in schema, skipping for now as it's a "bare minimum"
+            page_count=row["page_count"],
+            docling_schema_version=row["docling_schema_version"],
         )
 
-        return ExtractionResult(
-            source_chunks=source_chunks,
-            manifest_json=manifest,
-            image_count=len(images),
-            table_count=len(tables),
-            equation_count=len(equations),
-            chunk_count=len(source_chunks)
-        )
+    def document_exists(self, doc_id: str) -> bool:
+        """Returns True if a document with the given ID already exists."""
+        row = self._conn.execute(
+            "SELECT 1 FROM documents WHERE id = ? LIMIT 1", (doc_id,)
+        ).fetchone()
+        return row is not None
 
     @property
     def connection(self) -> sqlite3.Connection:

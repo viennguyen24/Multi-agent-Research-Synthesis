@@ -24,8 +24,7 @@ CREATE TABLE IF NOT EXISTS images (
     base64_data TEXT NOT NULL,
     page_number INTEGER,
     caption TEXT,
-    bbox_json TEXT,
-    annotation_json TEXT,
+    contextualized_text TEXT,
     FOREIGN KEY (document_id) REFERENCES documents(id)
 );
 """
@@ -38,7 +37,7 @@ CREATE TABLE IF NOT EXISTS tables (
     html_content TEXT NOT NULL,
     page_number INTEGER,
     caption TEXT,
-    bbox_json TEXT,
+    contextualized_text TEXT,
     col_count INTEGER,
     row_count INTEGER,
     FOREIGN KEY (document_id) REFERENCES documents(id)
@@ -51,9 +50,8 @@ CREATE TABLE IF NOT EXISTS equations (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
     text TEXT NOT NULL,
-    orig TEXT,
+    contextualized_text TEXT,
     page_number INTEGER,
-    bbox_json TEXT,
     caption TEXT,
     FOREIGN KEY (document_id) REFERENCES documents(id)
 );
@@ -65,12 +63,11 @@ CREATE TABLE IF NOT EXISTS text_chunks (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
     text TEXT NOT NULL,
+    contextualized_text TEXT,
     headings_json TEXT NOT NULL,
-    captions_json TEXT NOT NULL,
     page_numbers_json TEXT NOT NULL,
     doc_item_labels_json TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
-    content_hash TEXT NOT NULL,
     embedding_model TEXT,
     embedded_at TEXT,
     FOREIGN KEY (document_id) REFERENCES documents(id)
@@ -95,5 +92,4 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_equations_document_id ON equations(document_id);",
     "CREATE INDEX IF NOT EXISTS idx_equations_page_number ON equations(page_number);",
     "CREATE INDEX IF NOT EXISTS idx_text_chunks_document_id ON text_chunks(document_id);",
-    "CREATE INDEX IF NOT EXISTS idx_text_chunks_content_hash ON text_chunks(content_hash);",
 ]
