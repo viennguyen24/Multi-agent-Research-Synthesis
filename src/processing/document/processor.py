@@ -3,16 +3,17 @@ from .backends import DoclingBackend, LightOnOCRBackend
 from .schema import ExtractionManifest, ExtractionResult
 
 BACKEND_REGISTRY: dict[str, type[OCRBackend]] = {
-    "docling": DoclingBackend,
     "lighton": LightOnOCRBackend,
 }
+if DoclingBackend:
+    BACKEND_REGISTRY["docling"] = DoclingBackend
 
 
-def get_ocr_backend(name: str = "docling") -> OCRBackend:
+def get_ocr_backend(name: str = "lighton") -> OCRBackend:
     """Instantiate an OCR backend by name.
 
     Args:
-        name: Key in BACKEND_REGISTRY (default: "docling").
+        name: Key in BACKEND_REGISTRY (default: "lighton").
 
     Returns:
         An instance of the requested OCRBackend.
@@ -30,7 +31,7 @@ def get_ocr_backend(name: str = "docling") -> OCRBackend:
 
 
 class DocProcessor:
-    def __init__(self, backend: str | OCRBackend = "docling"):
+    def __init__(self, backend: str | OCRBackend = "lighton"):
         """Create a document processor with the given OCR backend.
 
         Args:

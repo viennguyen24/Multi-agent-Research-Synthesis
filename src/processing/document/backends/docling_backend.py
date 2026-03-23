@@ -252,11 +252,10 @@ def _extract_artifact(
             return None
         buffered = BytesIO()
         image.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         return ExtractedImage(
             id=item_id,
             mime_type="image/png",
-            base64_data=img_str,
+            image_bytes=buffered.getvalue(),
             page=_extract_page_no(item),
             caption=_extract_caption(item),
         )

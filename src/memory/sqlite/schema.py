@@ -15,13 +15,13 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 """
 
-# Images table stores extracted image data as base64
+# Images table stores extracted image data as binary BLOBs
 CREATE_IMAGES_TABLE = """
 CREATE TABLE IF NOT EXISTS images (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
     mime_type TEXT NOT NULL,
-    base64_data TEXT NOT NULL,
+    data BLOB NOT NULL,
     page_number INTEGER,
     caption TEXT,
     bbox_json TEXT,

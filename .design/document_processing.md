@@ -18,12 +18,12 @@ class OCRBackend(ABC):
 
 | Key | Class | Status |
 |------|------|--------|
-| `"docling"` | `DoclingBackend` | ✅ Active (default) |
-| `"lighton"` | `LightOnOCRBackend` | 🚧 Stub — raises `NotImplementedError` |
+| `"lighton"` | `LightOnOCRBackend` | ✅ Active (Too slow CPU inference) |
+| `"docling"` | `DoclingBackend` | ✅ Active (has issues with subscripts in text)|
 | `"chandra"` | `ChandraOCRBackend` | 🚧 Not written yet |
 | `"glm"` | `GLMOCRBackend` | 🚧 Not written yet |
 
-`DocProcessor` accepts an optional `backend` parameter (string key or `OCRBackend` instance). It defaults to `"docling"`, so existing callers are unaffected.
+`DocProcessor` accepts an optional `backend` parameter (string key or `OCRBackend` instance). It defaults to `"lighton"`.
 
 ### Adding a new backend
 
@@ -50,12 +50,12 @@ src/processing/document/
 
 Each run ingests the PDF and writes artifacts to `artifacts/<doc>`, which includes:
 
-- `document.md`
-- `chunks.jsonl`
-- `images/`
-- `tables/`
-- `equations.jsonl`
-- `manifest.json`
+- `research.db`: SQLite database (located in `data/`) containing:
+    - `images`: Binary BLOBs of extracted pictures.
+    - `tables`: HTML representations of tables.
+    - `equations`: LaTeX or raw text formulas.
+    - `text_chunks`: Semantic markdown chunks with metadata.
+    - `manifest`: Index of document-artifact associations.
 
 ### Artifact Content
 

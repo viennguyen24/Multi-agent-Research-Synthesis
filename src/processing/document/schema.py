@@ -15,7 +15,7 @@ class ExtractedImage:
     """
     id: str
     mime_type: str
-    base64_data: str
+    image_bytes: bytes
     page: int | None
     caption: str
 
