@@ -1,6 +1,6 @@
 from .backend_base import OCRBackend
 from .backends import DoclingBackend, LightOnOCRBackend
-from .schema import ExtractionManifest, ExtractionResult
+from .schema import ExtractionResult
 
 BACKEND_REGISTRY: dict[str, type[OCRBackend]] = {
     "docling": DoclingBackend,
@@ -45,25 +45,19 @@ class DocProcessor:
     def process_document(self, source_pdf_path: str) -> ExtractionResult:
         """
         Process a PDF and return an ExtractionResult.
-        If processing fails, returns an empty result instead of raising an exception. Corrupt document shouldn't crash the entire pipeline.
+        If processing fails, returns an empty result instead of raising an exception.
+        Corrupt documents shouldn't crash the entire pipeline.
         """
         try:
             return self.backend.extract(source_pdf_path)
         except Exception as e:
             print(f"Failed to process document {source_pdf_path}: {e}")
             return ExtractionResult(
+                doc_id="failed_doc",
+                source_path=source_pdf_path,
+                markdown="",
                 source_chunks=[],
-                manifest_json=ExtractionManifest(
-                    doc_id="failed_doc",
-                    source_pdf_path=source_pdf_path,
-                    markdown_path="",
-                    images=[],
-                    tables=[],
-                    equations=[],
-                    references=[]
-                ),
-                image_count=0,
-                table_count=0,
-                equation_count=0,
-                chunk_count=0
+                images=[],
+                tables=[],
+                equations=[],
             )

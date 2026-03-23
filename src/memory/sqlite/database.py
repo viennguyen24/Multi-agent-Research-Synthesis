@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import hashlib
 from pathlib import Path
 
 import sqlite_vec
@@ -10,14 +9,12 @@ import sqlite_vec
 from src.processing.document.schema import (
     ExtractionResult,
     ExtractedChunk,
-    ExtractionManifest,
     ExtractedImage,
     ExtractedTable,
     ExtractedEquation,
 )
-from .models import TABLE_NAMES
 from ..provider.provider import DatabaseProvider
-from .config import DEFAULT_CONFIG, StorageConfig
+from .config import DEFAULT_CONFIG, StorageConfig, TABLE_NAMES
 from .schema import (
     CREATE_DOCUMENTS_TABLE,
     CREATE_EQUATIONS_TABLE,
@@ -108,14 +105,27 @@ class SQLiteDatabase(DatabaseProvider):
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
         self.setup()
 
+    def document_exists(self, content_hash: str) -> bool:
+        """Returns True if a document with the given content hash already exists."""
+        # Using the content_hash to determine if a document exists
+        row = self._conn.execute(
+            "SELECT 1 FROM documents WHERE content_hash = ? LIMIT 1", (content_hash,)
+        ).fetchone()
+        return row is not None
+        
+    def load_document_by_hash(self, content_hash: str) -> ExtractionResult | None:
+        """Loads an ExtractionResult from the database using its content hash."""
+        row = self._conn.execute(
+            "SELECT id FROM documents WHERE content_hash = ? LIMIT 1", (content_hash,)
+        ).fetchone()
+        if not row:
+            return None
+        return self.load_document(row["id"])
+
     def save_document(self, result: ExtractionResult) -> None:
         """Persists an ExtractionResult to the database."""
-        manifest = result.manifest_json
-        doc_id = manifest.doc_id
-        
-        # Calculate content hash if not present (using source_pdf_path + current time as fallback)
-        # In a real scenario, we'd hash the file bytes.
-        content_hash = hashlib.sha256(manifest.source_pdf_path.encode()).hexdigest()
+        doc_id = result.doc_id
+        content_hash = result.content_hash
 
         with self._conn:
             # 1. Save Document
@@ -127,70 +137,65 @@ class SQLiteDatabase(DatabaseProvider):
                 """,
                 (
                     doc_id,
-                    manifest.source_pdf_path,
-                    Path(manifest.source_pdf_path).name,
-                    "", # Temporary: empty markdown as it's not in ExtractionResult
-                    0,  # Temporary: page count not directly in result
+                    result.source_path,
+                    Path(result.source_path).name,
+                    result.markdown,
+                    result.page_count,
                     content_hash,
-                    None
+                    result.docling_schema_version
                 )
             )
 
             # 2. Save Images
-            for img in manifest.images:
+            for img in result.images:
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO images 
-                    (id, document_id, mime_type, base64_data, page_number, caption, bbox_json, annotation_json) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, document_id, mime_type, base64_data, page_number, caption, contextualized_text) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (img.id, doc_id, img.mime_type, img.base64_data, img.page, img.caption, None, None)
+                    (img.id, doc_id, img.mime_type, img.base64_data, img.page, img.caption, img.contextualized_text)
                 )
 
             # 3. Save Tables
-            for tbl in manifest.tables:
+            for tbl in result.tables:
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO tables 
-                    (id, document_id, html_content, page_number, caption, bbox_json, col_count, row_count) 
+                    (id, document_id, html_content, page_number, caption, contextualized_text, col_count, row_count) 
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (tbl.id, doc_id, tbl.html_content, tbl.page, tbl.title, None, None, None)
+                    (tbl.id, doc_id, tbl.html_content, tbl.page, tbl.title, tbl.contextualized_text, tbl.col_count, tbl.row_count)
                 )
 
             # 4. Save Equations
-            for eq in manifest.equations:
+            for eq in result.equations:
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO equations 
-                    (id, document_id, text, orig, page_number, bbox_json, caption) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, document_id, text, contextualized_text, page_number, caption) 
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (eq.id, doc_id, eq.latex_or_text, None, eq.page, None, None)
+                    (eq.id, doc_id, eq.latex_or_text, eq.contextualized_text, eq.page, eq.caption)
                 )
 
             # 5. Save Text Chunks
-            for idx, chunk in enumerate(result.source_chunks):
-                chunk_id = f"{doc_id}_chunk_{idx:04d}"
-                chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
-                
+            for idx, chunk in enumerate(result.source_chunks):        
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO text_chunks 
-                    (id, document_id, text, headings_json, captions_json, page_numbers_json, 
-                     doc_item_labels_json, chunk_index, content_hash) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, document_id, text, headings_json, captions_json, page_numbers_json, chunk_index, contextualized_text) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        chunk_id,
+                        chunk.id,
                         doc_id,
                         chunk.text,
                         json.dumps(chunk.headings),
                         json.dumps(chunk.captions),
                         json.dumps(chunk.page_numbers),
-                        json.dumps([]), # doc_item_labels_json not directly available
                         idx,
-                        chunk_hash
+                        chunk.contextualized_text
                     )
                 )
 
@@ -209,7 +214,8 @@ class SQLiteDatabase(DatabaseProvider):
                 mime_type=row["mime_type"],
                 base64_data=row["base64_data"],
                 page=row["page_number"],
-                caption=row["caption"] or ""
+                caption=row["caption"] or "",
+                contextualized_text=row["contextualized_text"]
             ) for row in img_rows
         ]
 
@@ -220,7 +226,10 @@ class SQLiteDatabase(DatabaseProvider):
                 id=row["id"],
                 html_content=row["html_content"],
                 page=row["page_number"],
-                title=row["caption"] or ""
+                title=row["caption"] or "",
+                contextualized_text=row["contextualized_text"],
+                col_count=row["col_count"],
+                row_count=row["row_count"]
             ) for row in tbl_rows
         ]
 
@@ -232,7 +241,8 @@ class SQLiteDatabase(DatabaseProvider):
                 latex_or_text=row["text"],
                 display_mode="block", # Defaulting as not stored
                 page=row["page_number"],
-                markdown_anchor=f"[[eq:{row['id']}]]"
+                caption=row["caption"] or "",
+                contextualized_text=row["contextualized_text"]
             ) for row in eq_rows
         ]
 
@@ -243,34 +253,25 @@ class SQLiteDatabase(DatabaseProvider):
         ).fetchall()
         source_chunks = [
             ExtractedChunk(
+                id=row["id"],
                 text=row["text"],
-                contextualized_text=row["text"], # Fallback
+                contextualized_text=row["contextualized_text"],
                 headings=json.loads(row["headings_json"]),
                 captions=json.loads(row["captions_json"]),
-                page_numbers=json.loads(row["page_numbers_json"]),
-                bboxes=[] # Not stored
+                page_numbers=json.loads(row["page_numbers_json"])
             ) for row in chunk_rows
         ]
 
-        # 6. Reconstruct Manifest (References are missing in current schema, we'd need a table for them)
-        # For now, minimal reconstruction
-        manifest = ExtractionManifest(
+        return ExtractionResult(
             doc_id=doc_id,
-            source_pdf_path=doc_row["source_path"],
-            markdown_path="",
+            source_path=doc_row["source_path"],
+            markdown=doc_row["markdown"],
+            source_chunks=source_chunks,
             images=images,
             tables=tables,
             equations=equations,
-            references=[] # Missing in schema, skipping for now as it's a "bare minimum"
-        )
-
-        return ExtractionResult(
-            source_chunks=source_chunks,
-            manifest_json=manifest,
-            image_count=len(images),
-            table_count=len(tables),
-            equation_count=len(equations),
-            chunk_count=len(source_chunks)
+            page_count=doc_row["page_count"],
+            docling_schema_version=doc_row["docling_schema_version"]
         )
 
     @property
