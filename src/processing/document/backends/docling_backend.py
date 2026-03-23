@@ -136,8 +136,8 @@ class DoclingBackend(OCRBackend):
         document = conv_res.document
         self._infer_heading_depth_from_numbering(document)
 
-        # Export to markdown with embedded images for visual context in LLM
-        markdown = document.export_to_markdown(image_mode=ImageRefMode.EMBEDDED)
+        # Export to markdown with referenced images for visual context in LLM
+        markdown = document.export_to_markdown(image_mode=ImageRefMode.REFERENCED)
 
         chunks = self._extract_text_chunks(document, doc_id)
         images, tables, equations = self._extract_multimodal_artifacts(document, doc_id, markdown)

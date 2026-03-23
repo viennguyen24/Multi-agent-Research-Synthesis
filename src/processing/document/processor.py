@@ -1,6 +1,10 @@
+import hashlib
+from pathlib import Path
+from typing import Any
+
 from .backend_base import OCRBackend
 from .backends import DoclingBackend, LightOnOCRBackend
-from .schema import ExtractionResult
+from .schema import ExtractionResult, Contextualizer, Embedder
 
 BACKEND_REGISTRY: dict[str, type[OCRBackend]] = {
     "docling": DoclingBackend,
@@ -9,17 +13,7 @@ BACKEND_REGISTRY: dict[str, type[OCRBackend]] = {
 
 
 def get_ocr_backend(name: str = "docling") -> OCRBackend:
-    """Instantiate an OCR backend by name.
-
-    Args:
-        name: Key in BACKEND_REGISTRY (default: "docling").
-
-    Returns:
-        An instance of the requested OCRBackend.
-
-    Raises:
-        ValueError: If the name is not registered.
-    """
+    """Instantiate an OCR backend by name."""
     cls = BACKEND_REGISTRY.get(name)
     if cls is None:
         raise ValueError(
@@ -30,34 +24,65 @@ def get_ocr_backend(name: str = "docling") -> OCRBackend:
 
 
 class DocProcessor:
-    def __init__(self, backend: str | OCRBackend = "docling"):
-        """Create a document processor with the given OCR backend.
-
-        Args:
-            backend: Either a backend name string (looked up in
-                     BACKEND_REGISTRY) or an OCRBackend instance.
+    def __init__(
+        self,
+        backend: str | OCRBackend = "docling",
+        db: Any = None,
+        contextualizer: Contextualizer | None = None,
+        embedder: Embedder | None = None
+    ):
+        """
+        Create a document processor with the given OCR backend and optional pipeline stages.
         """
         if isinstance(backend, str):
             self.backend = get_ocr_backend(backend)
         else:
             self.backend = backend
+        self._db = db
+        self._contextualizer = contextualizer
+        self._embedder = embedder
 
-    def process_document(self, source_pdf_path: str) -> ExtractionResult:
+    def process_document(self, source_path: str) -> ExtractionResult | None:
         """
-        Process a PDF and return an ExtractionResult.
-        If processing fails, returns an empty result instead of raising an exception.
-        Corrupt documents shouldn't crash the entire pipeline.
+        Full pipeline: check cache → extract → contextualize → embed → store.
+        Returns ExtractionResult on success, None on failure.
         """
         try:
-            return self.backend.extract(source_pdf_path)
+            content_hash = ""
+            
+            with open(source_path, "rb") as f:
+                content_hash = hashlib.sha256(f.read()).hexdigest()
+
+            # Skip re-ingestion if document already exists
+            if self._db and self._db.document_exists(content_hash):
+                cached = self._db.load_document_by_hash(content_hash)
+                if cached:
+                    print(f"[DocProcessor] Cache hit for {source_path}")
+                    return cached
+
+            # Parse document
+            print(f"[DocProcessor] Extracting {source_path}...")
+            result = self.backend.extract(source_path)
+            result.content_hash = content_hash
+
+            # Contextualize each chunk
+            if self._contextualizer:
+                print(f"[DocProcessor] Contextualizing chunks...")
+                result = self._contextualizer.contextualize(result)
+
+            # Create embeddings on document chunks for retrieval
+            embeddings = None
+            if self._embedder:
+                print(f"[DocProcessor] Embedding chunks...")
+                embeddings = self._embedder.embed_extraction_result(result)
+
+            # Persist to database
+            if self._db:
+                print(f"[DocProcessor] Storing to database...")
+                self._db.save_document(result)
+
+            return result
+
         except Exception as e:
-            print(f"Failed to process document {source_pdf_path}: {e}")
-            return ExtractionResult(
-                doc_id="failed_doc",
-                source_path=source_pdf_path,
-                markdown="",
-                source_chunks=[],
-                images=[],
-                tables=[],
-                equations=[],
-            )
+            print(f"[DocProcessor] Failed to ingest {source_path}: {e}")
+            return None
