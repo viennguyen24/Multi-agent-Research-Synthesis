@@ -18,9 +18,15 @@ try:
 except ImportError:
     LightOnOCRBackend = None
 
+try:
+    from .opendataloader_backend import OpendataloaderBackend
+except ImportError:
+    OpendataloaderBackend = None
+
 __all__ = [
     "DoclingBackend",
     "ChandraOCRBackend",
     "LightOnOCRBackend",
     "GLMOCRBackend",
+    "OpendataloaderBackend",
 ]
