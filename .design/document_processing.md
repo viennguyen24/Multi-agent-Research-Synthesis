@@ -22,8 +22,9 @@ class OCRBackend(ABC):
 | `"docling"` | `DoclingBackend` | ✅ Active (has issues with subscripts in text)| docling>=2.70,<3.0 | 1.5-2 GB |
 | `"chandra"` | `ChandraOCRBackend` | ✅ Active (Too slow CPU inference (~7 mins per page))| chandra-ocr[hf] | ~7GB |  
 | `"glm"` | `GLMOCRBackend` | ✅ Active (Slow CPU inference (~2.5 mins per page)) | transformers>=5.0.0, pillow, pypdfium2 | ~1 GB |
+| `"opendataloader"` | `OpendataloaderBackend` | ✅ Active (Default, fast via hybrid docling-fast with Java fallback) | opendataloader-pdf, Java 17+ | N/A (Client/Server) |
 
-`DocProcessor` accepts an optional `backend` parameter (string key or `OCRBackend` instance). It defaults to `"glm"`.
+`DocProcessor` accepts an optional `backend` parameter (string key or `OCRBackend` instance). It defaults to `"opendataloader"`.
 
 Note: some of the requirements are mutually exclusive (e.g. `docling` requires a specific `transformers` version less than 5, while LightOnOCR-2 is only implemented in `transformers` version 5 or later)
 
@@ -51,12 +52,15 @@ src/processing/document/
 │   │                        #   tables / equations → markdown annotation → manifest
 │   ├── lighton_backend.py   # LightOnOCR-2-1B-bbox: PDF→PIL via pypdfium2, per-page
 │   │                        #   inference, bbox-based image cropping, MarkdownChunker
+│   ├── opendataloader_backend.py # Default backend. Uses opendataloader-pdf CLI;
+│   │                        #   extracts images, tables, equations; chunks markdown;
+│   │                        #   customized with 10-min timeout and robust Java fallback.
 │   └── glm_backend.py       # GLMOCRBackend — local HuggingFace inference via AutoModelForCausalLM;
 │                            #   uses pypdfium2 for PDF→PIL conversion
 ├── chunks.py                # MarkdownChunker — LangChain header-splitter + recursive
 │                            #   char fallback; produces list[ExtractedChunk]
 ├── processor.py             # DocProcessor + BACKEND_REGISTRY factory; default backend
-│                            #   is "glm"; accepts string key or OCRBackend instance
+│                            #   is "opendataloader"; accepts string key or OCRBackend instance
 └── schema.py                # Shared dataclasses: ExtractedChunk, ExtractedImage,
                              #   ExtractedTable, ExtractedEquation, ExtractionManifest,
                              #   ExtractionResult, ArtifactReference
