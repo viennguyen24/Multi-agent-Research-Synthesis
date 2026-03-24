@@ -132,7 +132,7 @@ class SQLiteDatabase(DatabaseProvider):
             self._conn.execute(
                 """
                 INSERT OR REPLACE INTO documents 
-                (id, source_path, filename, markdown, page_count, content_hash, docling_schema_version) 
+                (id, source_path, filename, markdown, page_count, content_hash, schema) 
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -142,7 +142,7 @@ class SQLiteDatabase(DatabaseProvider):
                     result.markdown,
                     result.page_count,
                     content_hash,
-                    result.docling_schema_version
+                    result.schema
                 )
             )
 
@@ -162,10 +162,10 @@ class SQLiteDatabase(DatabaseProvider):
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO tables 
-                    (id, document_id, html_content, page_number, caption, contextualized_text, col_count, row_count) 
+                    (id, document_id, content, page_number, caption, contextualized_text, col_count, row_count) 
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (tbl.id, doc_id, tbl.html_content, tbl.page, tbl.title, tbl.contextualized_text, tbl.col_count, tbl.row_count)
+                    (tbl.id, doc_id, tbl.content, tbl.page, tbl.title, tbl.contextualized_text, tbl.col_count, tbl.row_count)
                 )
 
             # 4. Save Equations
@@ -180,21 +180,18 @@ class SQLiteDatabase(DatabaseProvider):
                 )
 
             # 5. Save Text Chunks
-            for idx, chunk in enumerate(result.source_chunks):        
+            for chunk in result.source_chunks:        
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO text_chunks 
-                    (id, document_id, text, headings_json, captions_json, page_numbers_json, chunk_index, contextualized_text) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, document_id, text, meta_data, contextualized_text) 
+                    VALUES (?, ?, ?, ?, ?)
                     """,
                     (
                         chunk.id,
                         doc_id,
                         chunk.text,
-                        json.dumps(chunk.headings),
-                        json.dumps(chunk.captions),
-                        json.dumps(chunk.page_numbers),
-                        idx,
+                        json.dumps(chunk.meta_data),
                         chunk.contextualized_text
                     )
                 )
@@ -224,7 +221,7 @@ class SQLiteDatabase(DatabaseProvider):
         tables = [
             ExtractedTable(
                 id=row["id"],
-                html_content=row["html_content"],
+                content=row["content"],
                 page=row["page_number"],
                 title=row["caption"] or "",
                 contextualized_text=row["contextualized_text"],
@@ -248,7 +245,7 @@ class SQLiteDatabase(DatabaseProvider):
 
         # 5. Load Chunks
         chunk_rows = self._conn.execute(
-            "SELECT * FROM text_chunks WHERE document_id = ? ORDER BY chunk_index", 
+            "SELECT * FROM text_chunks WHERE document_id = ? ORDER BY COALESCE(CAST(json_extract(meta_data, '$.chunk_index') AS INTEGER), id)", 
             (doc_id,)
         ).fetchall()
         source_chunks = [
@@ -256,9 +253,7 @@ class SQLiteDatabase(DatabaseProvider):
                 id=row["id"],
                 text=row["text"],
                 contextualized_text=row["contextualized_text"],
-                headings=json.loads(row["headings_json"]),
-                captions=json.loads(row["captions_json"]),
-                page_numbers=json.loads(row["page_numbers_json"])
+                meta_data=json.loads(row["meta_data"])
             ) for row in chunk_rows
         ]
 
@@ -271,7 +266,7 @@ class SQLiteDatabase(DatabaseProvider):
             tables=tables,
             equations=equations,
             page_count=doc_row["page_count"],
-            docling_schema_version=doc_row["docling_schema_version"]
+            schema=doc_row["schema"],
         )
 
     @property

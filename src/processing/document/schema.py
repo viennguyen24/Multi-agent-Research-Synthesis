@@ -36,7 +36,7 @@ class ExtractedTable:
         row_count: Number of rows
     """
     id: str
-    html_content: str
+    content: str
     page: int | None = None
     title: str = ""
     contextualized_text: str | None = None
@@ -77,9 +77,7 @@ class ExtractedChunk:
     """
     id: str
     text: str
-    headings: list[str]
-    captions: list[str] = field(default_factory=list)
-    page_numbers: list[int] = field(default_factory=list)
+    meta_data: dict[str, Any] = field(default_factory=dict)
     contextualized_text: str | None = None
 
 @dataclass
@@ -87,13 +85,13 @@ class ExtractionResult:
     """The final output of the document processing pipeline."""
     doc_id: str
     source_path: str
-    markdown: str
     source_chunks: list[ExtractedChunk]
     images: list[ExtractedImage]
     tables: list[ExtractedTable]
     equations: list[ExtractedEquation]
+    markdown: str | None = None
     page_count: int = 0
-    docling_schema_version: str | None = None
+    schema: str | None = None
     content_hash: str = ""
 
     @property
