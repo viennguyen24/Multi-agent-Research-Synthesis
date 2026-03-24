@@ -58,15 +58,21 @@ class LightOnOCRBackend(OCRBackend):
         print(f"Starting LightOnOCR extraction for {source.name} (ID: {doc_id})")
 
         # 1. Render PDF pages to images
-        pdf = pdfium.PdfDocument(source_pdf_path)
         page_images: List[Image.Image] = []
-        for i, page in enumerate(pdf):
-            if max_pages is not None:
-                if i >= max_pages:
-                    break
-            # Render at 200 DPI (scale ~2.77)
-            pil_image = page.render(scale=2.77).to_pil()
-            page_images.append(pil_image)
+        with pdfium.PdfDocument(source_pdf_path) as pdf:
+            for i in range(len(pdf)):
+                if max_pages is not None:
+                    if i >= max_pages:
+                        break
+                
+                page = pdf[i]
+                # Render at 200 DPI (scale ~2.77)
+                bitmap = page.render(scale=2.77)
+                pil_image = bitmap.to_pil()
+                page_images.append(pil_image)
+                
+                bitmap.close()
+                page.close()
         
         num_pages = len(page_images)
         print(f"Rendered {num_pages} pages.")

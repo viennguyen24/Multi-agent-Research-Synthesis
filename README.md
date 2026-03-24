@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ```
 
 Note: installing `transformers` and `sqlite-vec` can take longer because they bring specialized document-processing and vector-search dependencies.
-The system now uses **LightOnOCR-2-1B-bbox** by default for high-quality OCR and image extraction.
+The system now uses **GLM-OCR** natively by default for high-quality OCR and image extraction.
 sqlite-vec provides fast, local vector similarity search directly within SQLite.
 ### 3. API keys
 

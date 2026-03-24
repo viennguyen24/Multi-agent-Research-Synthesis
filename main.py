@@ -104,7 +104,11 @@ def _process_document(args: argparse.Namespace) -> tuple[Any, str]:
     _pdf_elapsed = time.perf_counter() - _t0
     
     if artifacts.chunk_count > 0:
-        source_str = "DATABASE" if args.use_db else "Docling"
+        if args.use_db:
+            source_str = "DATABASE"
+        else:
+            # processor is defined in the else block above
+            source_str = processor.backend.__class__.__name__
         print(f"[preprocessing] PDF extraction from {source_str} completed in {_pdf_elapsed:.2f}s", flush=True)
         
     if args.interactive:
