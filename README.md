@@ -33,6 +33,13 @@ Edit `.env` — replace the placeholder values with your LLM Provider's API key.
 - [Ollama Cloud API](https://ollama.com/settings/keys)
 - [Google AI Studio](https://github.com/google-gemini/cookbook/blob/main/quickstarts/Get_started.ipynb)
 
+If you are using the `unstructured` processor backend, you must also add its API key and URL:
+- [unstructured.io](https://docs.unstructured.io/welcome)
+```env
+UNSTRUCTURED_API_KEY="your-api-key"
+# UNSTRUCTURED_API_URL="..." # Only required if using a self-hosted or dedicated instance
+```
+
 ### 4. Langfuse Logging Setup
 
 To enable observability, ensure the following API keys are set in your `.env` file (you can get these from your Langfuse project settings):
@@ -67,7 +74,11 @@ The PDF input defaults to `Transformers.pdf` in the project root directory. You 
 You change the research query by adding `--query "Your question here"` or editing `DEFAULT_QUERY` in `main.py`.
 Adding the argument `-i` or `--interactive` adds a prompt for whether the user wants to continue, which pops up if a document is extracted and after the document extraction process is complete.
 
-Adding `--use-db` (or `--skip-processing`) skips the Docling document extraction process and instead attempts to load the parsed PDF chunks and metadata directly from the `processor.db` SQLite database if it exists, saving valuable API and compute time during iterative runs pipeline tuning.
+You can specify the document processor backend using `--processor`. The choices are `unstructured` (default), `docling`, or `lighton`.
+For example:
+```bash
+python main.py --processor unstructured
+```
 
 ## Graph Flow
 

@@ -8,3 +8,4 @@ docling>=2.70,<3.0
 sqlite-vec>=0.1.0
 langfuse>=2.0,<3.0
 langchain>=0.2,<1.0
+unstructured-client>=0.23.0
