@@ -22,7 +22,7 @@ class OCRBackend(ABC):
 | `"docling"` | `DoclingBackend` | ✅ Active (has issues with subscripts in text)| docling>=2.70,<3.0 | 1.5-2 GB |
 | `"chandra"` | `ChandraOCRBackend` | ✅ Active (Too slow CPU inference (~7 mins per page))| chandra-ocr[hf] | ~7GB |  
 | `"glm"` | `GLMOCRBackend` | ✅ Active (Slow CPU inference (~2.5 mins per page)) | transformers>=5.0.0, pillow, pypdfium2 | ~1 GB |
-| `"opendataloader"` | `OpendataloaderBackend` | ✅ Active (Default, fast via hybrid docling-fast with Java fallback) | opendataloader-pdf, Java 17+ | N/A (Client/Server) |
+| `"opendataloader"` | `OpendataloaderBackend` | ✅ Active (Default, hybrid docling-fast with Java fallback) | opendataloader-pdf[hybrid], Java 17+ | Docling's 1.5-2GB |
 
 `DocProcessor` accepts an optional `backend` parameter (string key or `OCRBackend` instance). It defaults to `"opendataloader"`.
 
