@@ -19,3 +19,4 @@ class StorageConfig:
 
 
 DEFAULT_CONFIG = StorageConfig()
+TABLE_NAMES = ["images", "tables", "equations", "text_chunks", "text_chunks_vec", "documents"]

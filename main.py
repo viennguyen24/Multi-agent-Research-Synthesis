@@ -8,7 +8,6 @@ from src.memory import get_database
 from src.graph import build_graph
 import src.llm
 from src.processing.document import DocProcessor
-from src.processing.document._common import _slugify
 import uuid
 from datetime import datetime, timezone
 from src.llm import GLOBAL_CONFIG, Provider
@@ -37,11 +36,6 @@ def _parse_args() -> argparse.Namespace:
         metavar="PATH",
         default=DEFAULT_SOURCE_PDF,
         help="Path to the PDF to analyse (default: %(default)s)"
-    )
-    parser.add_argument(
-        "--use-db",
-        action="store_true",
-        help="Skip document processing and attempt to load artifacts from the existing SQLite database",
     )
     parser.add_argument(
         "-i", "--interactive",
@@ -88,24 +82,15 @@ def _process_document(args: argparse.Namespace) -> tuple[Any, str]:
         sys.exit(f"error: file does not have a .pdf extension: {pdf_path}")
     
     _t0 = time.perf_counter()
-    doc_id = _slugify(pdf_path.stem)
     db = get_database()
     
-    if args.use_db:
-        artifacts = db.load_document(doc_id)
-        if not artifacts:
-            sys.exit(f"error: No cached database entry found for doc_id '{doc_id}'. The existing processor.db does not match the requested PDF. Please run without --use-db to re-process the document.")
-    else:
-        db.reset()
-        processor = DocProcessor()
-        artifacts = processor.process_document(str(pdf_path))
-        db.save_document(artifacts)
+    processor = DocProcessor(db=db)
+    artifacts = processor.process_document(str(pdf_path))
         
     _pdf_elapsed = time.perf_counter() - _t0
     
-    if artifacts.chunk_count > 0:
-        source_str = "DATABASE" if args.use_db else "Docling"
-        print(f"[preprocessing] PDF extraction from {source_str} completed in {_pdf_elapsed:.2f}s", flush=True)
+    if artifacts and artifacts.chunk_count > 0:
+        print(f"[preprocessing] PDF extraction/pipeline completed in {_pdf_elapsed:.2f}s", flush=True)
         
     if args.interactive:
         try:
@@ -115,12 +100,17 @@ def _process_document(args: argparse.Namespace) -> tuple[Any, str]:
         if response == "q":
             sys.exit("Execution stopped by user.")
     
-    status = "Extracted" if artifacts.chunk_count > 0 else "FAILED TO EXTRACT (running without documents)"
-    preprocessing_message = (
-        f"[preprocessing] {status} multimodal artifacts "
-        f"(images={artifacts.image_count}, tables={artifacts.table_count}, "
-        f"equations={artifacts.equation_count}, chunks={artifacts.chunk_count})"
-    )
+    status = "Processed" if artifacts and artifacts.chunk_count > 0 else "FAILED TO PROCESS (running without documents)"
+    
+    if artifacts:
+        preprocessing_message = (
+            f"[preprocessing] {status} multimodal artifacts "
+            f"(images={artifacts.image_count}, tables={artifacts.table_count}, "
+            f"equations={artifacts.equation_count}, chunks={artifacts.chunk_count})"
+        )
+    else:
+        preprocessing_message = f"[preprocessing] {status}"
+        
     return artifacts, preprocessing_message
 
 def _build_initial_state(args: argparse.Namespace, preprocessing_message: str, artifacts: Any) -> dict:
@@ -135,7 +125,7 @@ def _build_initial_state(args: argparse.Namespace, preprocessing_message: str, a
         'critique':         None,
         'document_context': "",
         'source_chunks':    artifacts.source_chunks if artifacts else [],
-        'doc_id':           artifacts.manifest_json.doc_id if artifacts else "unknown",
+        'doc_id':           artifacts.doc_id if artifacts else "unknown",
         'revision_history': [],
         'replan_history':   [],
         'messages':         [preprocessing_message],
