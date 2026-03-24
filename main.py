@@ -43,6 +43,13 @@ def _parse_args() -> argparse.Namespace:
         help="Pause after document extraction and require user confirmation to continue",
     )
     parser.add_argument(
+        "--processor",
+        type=str,
+        choices=["docling", "unstructured", "lighton"],
+        default="unstructured",
+        help="Backend document processor to use (default: %(default)s)"
+    )
+    parser.add_argument(
         "--logging",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -84,7 +91,7 @@ def _process_document(args: argparse.Namespace) -> tuple[Any, str]:
     _t0 = time.perf_counter()
     db = get_database()
     
-    processor = DocProcessor(db=db)
+    processor = DocProcessor(backend=args.processor, db=db)
     artifacts = processor.process_document(str(pdf_path))
         
     _pdf_elapsed = time.perf_counter() - _t0

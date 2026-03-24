@@ -3,12 +3,13 @@ from pathlib import Path
 from typing import Any
 
 from .backend_base import OCRBackend
-from .backends import DoclingBackend, LightOnOCRBackend
+from .backends import DoclingBackend, LightOnOCRBackend, UnstructuredBackend
 from .schema import ExtractionResult, Contextualizer, Embedder
 
 BACKEND_REGISTRY: dict[str, type[OCRBackend]] = {
     "docling": DoclingBackend,
     "lighton": LightOnOCRBackend,
+    "unstructured": UnstructuredBackend,
 }
 
 
