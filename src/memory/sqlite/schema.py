@@ -7,11 +7,11 @@ CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     source_path TEXT NOT NULL,
     filename TEXT NOT NULL,
-    markdown TEXT NOT NULL,
+    markdown TEXT,
     page_count INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    docling_schema_version TEXT
+    schema TEXT
 );
 """
 
@@ -34,7 +34,7 @@ CREATE_TABLES_TABLE = """
 CREATE TABLE IF NOT EXISTS tables (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
-    html_content TEXT NOT NULL,
+    content TEXT NOT NULL,
     page_number INTEGER,
     caption TEXT,
     col_count INTEGER,
@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS equations (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
     text TEXT NOT NULL,
-    orig TEXT,
     page_number INTEGER,
     caption TEXT,
     contextualized_text TEXT,
@@ -64,10 +63,7 @@ CREATE TABLE IF NOT EXISTS text_chunks (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
     text TEXT NOT NULL,
-    headings_json TEXT NOT NULL,
-    captions_json TEXT NOT NULL,
-    page_numbers_json TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL,
+    meta_data TEXT,
     contextualized_text TEXT,
     embedding_model TEXT,
     embedded_at TEXT,

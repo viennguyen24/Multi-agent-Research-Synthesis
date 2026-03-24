@@ -151,7 +151,7 @@ class DoclingBackend(OCRBackend):
             tables=tables,
             equations=equations,
             page_count=len(document.pages) if hasattr(document, "pages") else 0,
-            docling_schema_version=getattr(document, "version", None),
+            schema=getattr(document, "version", None),
         )
 
     def _extract_text_chunks(self, document: DoclingDocument, doc_id: str) -> list[ExtractedChunk]:
@@ -177,9 +177,12 @@ class DoclingBackend(OCRBackend):
                 ExtractedChunk(
                     id=f"{doc_id}_chunk_{idx:04d}",
                     text=chunk.text,
-                    headings=list(chunk.meta.headings) if chunk.meta.headings else [],
-                    captions=list(chunk.meta.captions) if chunk.meta.captions else [],
-                    page_numbers=sorted(set(page_numbers))
+                    meta_data={
+                        "headings": list(chunk.meta.headings) if chunk.meta.headings else [],
+                        "captions": list(chunk.meta.captions) if chunk.meta.captions else [],
+                        "page_numbers": sorted(set(page_numbers)),
+                        "chunk_index": idx
+                    }
                 )
             )
         return extracted_chunks
@@ -288,7 +291,7 @@ class DoclingBackend(OCRBackend):
         html = item.export_to_html(doc=document)
         return ExtractedTable(
             id=item_id,
-            html_content=html,
+            content=html,
             page=self._extract_page_no(item),
             title=self._extract_caption(item, document) or f"Table {item_id}",
             col_count=item.data.num_cols if hasattr(item, "data") and hasattr(item.data, "num_cols") else None,

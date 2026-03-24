@@ -41,7 +41,7 @@ class GeminiContextualizer:
         
         # Contextualize text chunks
         for chunk in result.source_chunks:
-            if len(chunk.text) < self.config.skip_chunk_token_threshold and len(chunk.headings) >= 2:
+            if len(chunk.text) < self.config.skip_chunk_token_threshold and len(chunk.meta_data.get("headings", [])) >= 2:
                 chunk.contextualized_text = chunk.text
                 continue
             
@@ -83,7 +83,8 @@ class GeminiContextualizer:
         # Find the last chunk at or before the artifact's page
         before_idx = -1
         for i, chunk in enumerate(chunks):
-            if chunk.page_numbers and max(chunk.page_numbers) <= artifact_page:
+            page_nums = chunk.meta_data.get("page_numbers", [])
+            if page_nums and max(page_nums) <= artifact_page:
                 before_idx = i
 
         if before_idx == -1:
@@ -104,7 +105,7 @@ class GeminiContextualizer:
         """Returns the raw content of an artifact suitable for LLM prompting."""
         from ..schema import ExtractedImage, ExtractedTable, ExtractedEquation
         if isinstance(artifact, ExtractedImage): return artifact.caption
-        if isinstance(artifact, ExtractedTable): return artifact.html_content
+        if isinstance(artifact, ExtractedTable): return artifact.content
         if isinstance(artifact, ExtractedEquation): return artifact.latex_or_text
         return ""
 
