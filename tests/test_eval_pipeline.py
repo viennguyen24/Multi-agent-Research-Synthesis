@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+from types import SimpleNamespace
+
+from eval.config import load_eval_config
+from eval.db import EvalDatabase
+from eval.pipeline.deck_views import build_deck_views
+from eval.pipeline.documents import build_documents, register_benchmark_tasks
+from eval.pipeline.harness import run_harness
+from eval.pipeline.reports import run_reports
+
+
+class TestEvalPipeline(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmpdir.name)
+        (self.root / "eval/metrics/benchmark/deck_bench/data").mkdir(parents=True, exist_ok=True)
+        (self.root / "data").mkdir(parents=True, exist_ok=True)
+        (self.root / "output").mkdir(parents=True, exist_ok=True)
+        self.research_db_path = self.root / "data/research.db"
+        sqlite3.connect(self.research_db_path).close()
+
+        manifest = {
+            "tasks": {
+                "1041": {
+                    "conference": "ECCV",
+                    "year": "2024",
+                    "paper_url": str(self.root / "paper.pdf"),
+                    "slides_url": str(self.root / "reference.pptx"),
+                }
+            }
+        }
+        (self.root / "eval/metrics/benchmark/deck_bench/data/tasks.json").write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+        self._write_config()
+        self._write_fake_pptx(self.root / "reference.pptx", [["Ref title", "Ref bullet"]])
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_register_and_build_documents_stage_isolated(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        captured: list[list[str]] = []
+
+        def fake_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            captured.append(pdf_paths)
+            return object()
+
+        processed_paths = build_documents(
+            config=config,
+            benchmark_id="deck_bench",
+            processor=fake_processor,
+        )
+        self.assertEqual(processed_paths, [str(self.root / "paper.pdf")])
+        self.assertEqual(captured, [[str(self.root / "paper.pdf")]])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            tasks = db.list_tasks("deck_bench")
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0].task_id, "1041")
+            self.assertEqual(tasks[0].suite_id, "eccv_2024")
+            self.assertEqual(tasks[0].query, "Explain this paper to an audience of laypeople")
+
+    def test_harness_persists_append_only_transcripts(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        register_benchmark_tasks(config, "deck_bench")
+        generated_pptx = self.root / "output/generated.pptx"
+        self._write_fake_pptx(generated_pptx, [["Gen title", "Gen bullet"]])
+
+        def fake_runner(**_kwargs):
+            return SimpleNamespace(
+                session_id="sess-1",
+                status="success",
+                final_state={"review": {"export_ready": True}, "messages": []},
+                node_events=[],
+                pptx_path=str(generated_pptx),
+                final_warnings=[],
+                error_text=None,
+            )
+
+        transcripts = run_harness(
+            config=config,
+            benchmark_id="deck_bench",
+            variant_id="v1",
+            graph_version="g1",
+            doc_pipeline_version="d1",
+            trial_count=2,
+            runner=fake_runner,
+        )
+        self.assertEqual(len(transcripts), 2)
+        with EvalDatabase(config.paths.eval_db) as db:
+            stored = db.list_transcripts(benchmark_id="deck_bench")
+            self.assertEqual(len(stored), 2)
+
+    def test_build_deck_views_extracts_generated_and_reference_views(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        register_benchmark_tasks(config, "deck_bench")
+        generated_pptx = self.root / "output/generated.pptx"
+        self._write_fake_pptx(generated_pptx, [["Gen title", "Gen bullet"]])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            db.insert_transcript(
+                transcript=SimpleNamespace(
+                    transcript_id="tx-1",
+                    benchmark_id="deck_bench",
+                    suite_id="eccv_2024",
+                    task_id="1041",
+                    trial_index=0,
+                    variant_id="v1",
+                    graph_version="g1",
+                    doc_pipeline_version="d1",
+                    status="success",
+                    created_at="now",
+                    finished_at="later",
+                    session_id="sess",
+                    query="Explain this paper to an audience of laypeople",
+                    source_document_id="1041",
+                    final_deck_path=str(generated_pptx),
+                    transcript_artifact_path=None,
+                    final_state_artifact_path=None,
+                    node_events_artifact_path=None,
+                    debug_artifact_path=None,
+                    error_text=None,
+                ),
+                created_at="now",
+            )
+
+        outputs = build_deck_views(config, "deck_bench")
+        self.assertEqual(len(outputs), 2)
+        with EvalDatabase(config.paths.eval_db) as db:
+            stored = db.list_deck_views()
+            self.assertEqual(len(stored), 2)
+
+    def test_reports_aggregate_metric_rows(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        with EvalDatabase(config.paths.eval_db) as db:
+            db.insert_metric_result(
+                result=SimpleNamespace(
+                    metric_result_id="mr-1",
+                    transcript_id="tx-1",
+                    suite_id="eccv_2024",
+                    trial_index=0,
+                    variant_id="v1",
+                    graph_version="g1",
+                    doc_pipeline_version="d1",
+                    benchmark_id="deck_bench",
+                    metric_id="deck_fidelity",
+                    grader_id="grader",
+                    subject_type="generated_deck",
+                    subject_id="tx-1",
+                    status="success",
+                    scalar_value=0.5,
+                    pass_fail=None,
+                    reason=None,
+                    artifact_path=None,
+                    metadata={},
+                ),
+                created_at="now",
+            )
+            db.insert_metric_result(
+                result=SimpleNamespace(
+                    metric_result_id="mr-2",
+                    transcript_id="tx-2",
+                    suite_id="eccv_2024",
+                    trial_index=1,
+                    variant_id="v1",
+                    graph_version="g1",
+                    doc_pipeline_version="d1",
+                    benchmark_id="deck_bench",
+                    metric_id="deck_fidelity",
+                    grader_id="grader",
+                    subject_type="generated_deck",
+                    subject_id="tx-2",
+                    status="success",
+                    scalar_value=1.0,
+                    pass_fail=None,
+                    reason=None,
+                    artifact_path=None,
+                    metadata={},
+                ),
+                created_at="now",
+            )
+
+        report_path = run_reports(config, "deck_bench", suite_id="eccv_2024")
+        content = Path(report_path).read_text(encoding="utf-8")
+        self.assertIn("deck_fidelity", content)
+        self.assertIn("0.75", content)
+
+    def _write_config(self) -> None:
+        config_text = f"""
+llm_config: llm.config.yaml
+storage:
+  eval_db: data/eval.db
+  artifacts_dir: artifacts
+  artifacts:
+    transcripts: artifacts/transcripts
+    deck_views: artifacts/deck_views
+    metric_results: artifacts/metric_results
+    reports: artifacts/reports
+    runtime_dbs: artifacts/runtime_dbs
+runtime:
+  research_db: data/research.db
+  output_dir: output
+benchmarks:
+  deck_bench: eval/metrics/benchmark/deck_bench/data/tasks.json
+"""
+        (self.root / "config.yaml").write_text(config_text.strip() + "\n", encoding="utf-8")
+        (self.root / "llm.config.yaml").write_text("groups: {}\nproviders: {}\nlitellm: {}\n", encoding="utf-8")
+
+    @staticmethod
+    def _write_fake_pptx(path: Path, slides: list[list[str]]) -> None:
+        with zipfile.ZipFile(path, "w") as archive:
+            for index, texts in enumerate(slides, start=1):
+                slide_xml = (
+                    '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+                    'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+                    + "".join(f"<a:t>{text}</a:t>" for text in texts)
+                    + "</p:sld>"
+                )
+                archive.writestr(f"ppt/slides/slide{index}.xml", slide_xml)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,24 @@
+providers:
+  openrouter:
+    shared:
+      api_key: "os.environ/OPENROUTER_API_KEY"
+      api_base: "os.environ/OPENROUTER_BASE_URL"
+    models:
+      openai/gpt-oss-120b:free: {}
+
+groups:
+  evaluator:
+    models:
+      - "openrouter/openai/gpt-oss-120b:free"
+    fallbacks:
+      - "evaluator"
+
+litellm:
+  default_group: "evaluator"
+  router:
+    num_retries: 1
+    retry_after: 5
+    cooldown_time: 60
+    enable_pre_call_checks: true
+    timeout: 120
+    routing_strategy: "least-busy"

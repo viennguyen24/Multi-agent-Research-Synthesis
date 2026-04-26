@@ -1,0 +1,19 @@
+llm_config: eval/llm.config.yaml
+
+storage:
+  eval_db: data/eval.db
+  artifacts_dir: artifacts
+  artifacts:
+    transcripts: artifacts/transcripts
+    deck_views: artifacts/deck_views
+    metric_results: artifacts/metric_results
+    reports: artifacts/reports
+    runtime_dbs: artifacts/runtime_dbs
+
+runtime:
+  research_db: data/research.db
+  output_dir: output
+
+benchmarks:
+  deck_bench: eval/metrics/benchmark/deck_bench/data/tasks.json
+
