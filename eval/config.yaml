@@ -18,4 +18,5 @@ runtime:
 
 benchmarks:
   deck_bench: metrics/benchmark/deck_bench/data/tasks.json
+  presentbench: eval/metrics/benchmark/presentbench/data/tasks.json
 

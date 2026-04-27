@@ -14,6 +14,7 @@ from eval.reports.base import BenchmarkLoader
 from eval.config import EvalConfig, ensure_eval_directories
 from eval.db import EvalDatabase
 from eval.metrics.benchmark.deck_bench.loader import DeckBenchLoader
+from eval.metrics.benchmark.presentbench.loader import PresentBenchLoader
 
 
 def utc_now() -> str:
@@ -23,6 +24,8 @@ def utc_now() -> str:
 def get_benchmark_loader(benchmark_id: str) -> BenchmarkLoader:
     if benchmark_id == "deck_bench":
         return DeckBenchLoader()
+    if benchmark_id == "presentbench":
+        return PresentBenchLoader()
     raise ValueError(f"Unsupported benchmark `{benchmark_id}`")
 
 
