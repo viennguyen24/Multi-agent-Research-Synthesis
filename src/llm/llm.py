@@ -6,6 +6,8 @@ import json
 import os
 import re
 import shutil
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar, get_origin
@@ -73,6 +75,116 @@ litellm.callbacks = [_failure_logger, "langfuse"]
 
 ROUTER: Router | None = None
 DEFAULT_MODEL_NAME: str = "app"
+_MIN_LOCAL_RETRY_AFTER_SECONDS = 15.0
+_MIN_LOCAL_COOLDOWN_SECONDS = 90.0
+_LOCAL_RATE_LIMIT_LOCK = threading.Lock()
+_LOCAL_RATE_LIMIT_EXPIRATIONS: dict[str, float] = {}
+
+
+def _coerce_positive_seconds(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def _coerce_non_negative_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(parsed, 0)
+
+
+def _is_rate_limit_exception(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 429:
+        return True
+    exc_name = type(exc).__name__.lower()
+    if "ratelimit" in exc_name or "rate_limit" in exc_name:
+        return True
+    return "rate limit" in str(exc).lower()
+
+
+def _tune_router_settings(raw_settings: dict[str, Any]) -> dict[str, Any]:
+    settings = dict(raw_settings)
+    settings["num_retries"] = min(
+        _coerce_non_negative_int(settings.get("num_retries"), 1),
+        1,
+    )
+    settings["retry_after"] = max(
+        _coerce_positive_seconds(
+            settings.get("retry_after"),
+            _MIN_LOCAL_RETRY_AFTER_SECONDS,
+        ),
+        _MIN_LOCAL_RETRY_AFTER_SECONDS,
+    )
+    settings["cooldown_time"] = max(
+        _coerce_positive_seconds(
+            settings.get("cooldown_time"),
+            _MIN_LOCAL_COOLDOWN_SECONDS,
+        ),
+        _MIN_LOCAL_COOLDOWN_SECONDS,
+    )
+    settings.setdefault("enable_pre_call_checks", True)
+    return settings
+
+
+def _cooldown_keys(alias: str, actual_model: str | None) -> list[str]:
+    if actual_model:
+        return [actual_model]
+    return [f"alias:{alias}"]
+
+
+def _get_cooldown_wait_seconds(alias: str, actual_model: str | None) -> float:
+    now = time.monotonic()
+    max_wait = 0.0
+    with _LOCAL_RATE_LIMIT_LOCK:
+        for key in _cooldown_keys(alias, actual_model):
+            expires_at = _LOCAL_RATE_LIMIT_EXPIRATIONS.get(key)
+            if expires_at is None:
+                continue
+            remaining = expires_at - now
+            if remaining > 0:
+                max_wait = max(max_wait, remaining)
+            else:
+                _LOCAL_RATE_LIMIT_EXPIRATIONS.pop(key, None)
+    return max_wait
+
+
+def _wait_for_rate_limit_cooldown(alias: str, actual_model: str | None) -> None:
+    wait_seconds = _get_cooldown_wait_seconds(alias, actual_model)
+    if wait_seconds <= 0:
+        return
+    label = actual_model or alias
+    _agent_logger.log(
+        f"[{current_agent_label.get()}] Local cooldown active for {label}; waiting {wait_seconds:.1f}s",
+        level="info",
+    )
+    time.sleep(wait_seconds)
+
+
+def _register_rate_limit_cooldown(alias: str, actual_model: str | None, exc: Exception) -> None:
+    if not _is_rate_limit_exception(exc):
+        return
+
+    retry_after_hint = _coerce_positive_seconds(
+        getattr(exc, "retry_after", None),
+        _MIN_LOCAL_RETRY_AFTER_SECONDS,
+    )
+    cooldown_seconds = max(_MIN_LOCAL_COOLDOWN_SECONDS, retry_after_hint)
+    expires_at = time.monotonic() + cooldown_seconds
+    with _LOCAL_RATE_LIMIT_LOCK:
+        for key in _cooldown_keys(alias, actual_model):
+            _LOCAL_RATE_LIMIT_EXPIRATIONS[key] = expires_at
+    label = actual_model or alias
+    _agent_logger.log(
+        f"[{current_agent_label.get()}] Applied local cooldown to {label} for {cooldown_seconds:.1f}s after rate limit",
+        level="warning",
+    )
 
 
 @dataclass
@@ -206,6 +318,8 @@ def build_litellm_model_list(config_data: dict[str, Any]) -> list[DeploymentType
             for key in ["rpm", "tpm", "tps", "weight", "max_parallel_requests"]:
                 if key in merged:
                     out_row[key] = merged[key]
+            if group_name in {"context", "context-vision"} and "max_parallel_requests" not in out_row:
+                out_row["max_parallel_requests"] = 1
             out.append(out_row)
 
     return out
@@ -224,7 +338,7 @@ def build_router_from_config_data(config_data: dict[str, Any]) -> Router:
     if not model_list:
         raise ValueError("Invalid configuration: add at least one entry under `groups.*.models`")
 
-    settings = dict(litellm_config.get("router") or {})
+    settings = _tune_router_settings(litellm_config.get("router") or {})
 
     fallbacks: list[dict[str, list[str]]] = []
     for group_name, group_config in groups.items():
@@ -544,6 +658,7 @@ class LiteLLMProvider:
             "messages": messages,
             **(self.config.litellm_params or {}),
         }
+        kw.setdefault("num_retries", 1)
         t = kwargs.get("temperature", self.config.temperature)
         mt = kwargs.get("max_tokens", self.config.max_tokens)
         if t is not None:
@@ -558,6 +673,9 @@ class LiteLLMProvider:
         if session_id:
             existing_meta = kw.get("metadata") or {}
             kw["metadata"] = {"session_id": session_id, **existing_meta}
+
+        attempted_model = self.peek_router_litellm_model(messages)
+        _wait_for_rate_limit_cooldown(kw["model"], attempted_model)
 
         try:
             if schema is None:
@@ -587,6 +705,7 @@ class LiteLLMProvider:
                         fallback_reason=str(native_exc).split("\n")[0][:200],
                     )
         except Exception as exc:
+            _register_rate_limit_cooldown(kw["model"], attempted_model, exc)
             raise LLMCallError(kw["model"], exc) from None
         self.last_model_used = getattr(resp, "model", None) or kw["model"]
         return resp.choices[0].message.content or ""
@@ -604,6 +723,7 @@ class LiteLLMProvider:
         kw: dict[str, Any] = {
             **(self.config.litellm_params or {}),
         }
+        kw.setdefault("num_retries", 1)
         t = kwargs.get("temperature", self.config.temperature)
         mt = kwargs.get("max_tokens", self.config.max_tokens)
         if t is not None:
@@ -617,6 +737,8 @@ class LiteLLMProvider:
             kw["metadata"] = {"session_id": session_id, **existing_meta}
 
         alias = (self.config.model or DEFAULT_MODEL_NAME).strip()
+        attempted_model = self.peek_router_litellm_model(messages_batch[0]) if messages_batch else None
+        _wait_for_rate_limit_cooldown(alias, attempted_model)
 
         try:
             responses = await self._router.abatch_completion_one_model_multiple_requests(
@@ -625,6 +747,7 @@ class LiteLLMProvider:
                 **kw,
             )
         except Exception as exc:
+            _register_rate_limit_cooldown(alias, attempted_model, exc)
             raise LLMCallError(alias, exc) from None
 
         parsed: list[str | Exception] = []
@@ -651,6 +774,7 @@ class LiteLLMProvider:
             "tools": tools,
             **(self.config.litellm_params or {}),
         }
+        kw.setdefault("num_retries", 1)
         t = kwargs.get("temperature", self.config.temperature)
         mt = kwargs.get("max_tokens", self.config.max_tokens)
         if t is not None:
@@ -663,9 +787,13 @@ class LiteLLMProvider:
             existing_meta = kw.get("metadata") or {}
             kw["metadata"] = {"session_id": session_id, **existing_meta}
 
+        attempted_model = self.peek_router_litellm_model(messages)
+        _wait_for_rate_limit_cooldown(kw["model"], attempted_model)
+
         try:
             resp = self._router.completion(**kw)
         except Exception as exc:
+            _register_rate_limit_cooldown(kw["model"], attempted_model, exc)
             raise LLMCallError(kw["model"], exc) from None
 
         self.last_model_used = getattr(resp, "model", None) or kw["model"]

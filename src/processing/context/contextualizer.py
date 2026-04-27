@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import urllib.error
 import urllib.request
@@ -29,6 +30,8 @@ class ContextConfig:
         batch_size: Number of items to process in each batch
         cache_control: If True, attach LiteLLM ``cache_control`` to the system block on supported calls.
         use_batch: If True, use LiteLLM batched completion; if False, one ``complete()`` per item.
+        batch_cooldown_seconds: Base cooldown between contextualizer batches.
+        rate_limit_batch_cooldown_seconds: Stronger cooldown after rate-limit-heavy batches.
     """
     model: str = "context"
     vision_model: str = "context-vision"
@@ -36,7 +39,9 @@ class ContextConfig:
     max_concurrency: int = 1
     batch_size: int = 10      # Items per batch
     cache_control: bool = True
-    use_batch: bool = True
+    use_batch: bool = False
+    batch_cooldown_seconds: float = 30.0
+    rate_limit_batch_cooldown_seconds: float = 30.0
 
 
 DEFAULT_CONTEXT_CONFIG = ContextConfig()
@@ -85,6 +90,59 @@ class Contextualizer:
         if object_store is not None:
             self._image_uploader = ImageUploader(object_store)
         self._multimodal_disabled = False
+
+    def _is_rate_limit_error(self, exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 429:
+            return True
+        message = str(exc).lower()
+        return "ratelimit" in type(exc).__name__.lower() or "rate limit" in message
+
+    def _is_timeout_error(self, exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 408:
+            return True
+        message = str(exc).lower()
+        return "timeout" in type(exc).__name__.lower() or "timed out" in message
+
+    def _is_cache_control_quota_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "totalcachedcontentstoragetokenspermodelfreetier" in message or (
+            "cachedcontent" in message and "limit exceeded" in message
+        )
+
+    def _handle_contextualizer_exception(self, exc: Exception) -> dict[str, bool]:
+        if self._use_cache_control and self._is_cache_control_quota_error(exc):
+            self._use_cache_control = False
+            self._logger.log(
+                "Disabled contextualizer cache_control after cached-content quota error; remaining batches will send uncached prompts.",
+                level="warning",
+            )
+        return {
+            "rate_limited": self._is_rate_limit_error(exc),
+            "timed_out": self._is_timeout_error(exc),
+        }
+
+    async def _cooldown_after_batch(
+        self,
+        *,
+        kind: str,
+        batch_index: int,
+        rate_limited: bool,
+        timed_out: bool,
+    ) -> None:
+        delay_seconds = self.config.batch_cooldown_seconds
+        if rate_limited:
+            delay_seconds = max(delay_seconds, self.config.rate_limit_batch_cooldown_seconds)
+        elif timed_out:
+            delay_seconds = max(delay_seconds, self.config.batch_cooldown_seconds)
+        if delay_seconds <= 0:
+            return
+        self._logger.log(
+            f"contextualizer_batch_stagger kind={kind} batch_index={batch_index} delay_s={delay_seconds:.2f}",
+            level="info",
+        )
+        await asyncio.sleep(delay_seconds)
 
     async def contextualize(self, result: ExtractionResult) -> ExtractionResult:
         try:
@@ -163,20 +221,33 @@ class Contextualizer:
                         except Exception as exc:
                             results.append(exc)
 
+                batch_flags = {"rate_limited": False, "timed_out": False}
                 for i, result_str in enumerate(results):
                     item = batch[i]
                     if isinstance(result_str, Exception):
+                        flags = self._handle_contextualizer_exception(result_str)
+                        batch_flags["rate_limited"] = batch_flags["rate_limited"] or flags["rate_limited"]
+                        batch_flags["timed_out"] = batch_flags["timed_out"] or flags["timed_out"]
                         self._logger.log(f"Failed to contextualize image {item.id}: {result_str}", level="error")
                         item.contextualized_text = item.caption
                     else:
                         validated = self._validate_contextualized_text(result_str)
                         item.contextualized_text = validated or item.caption
+                return batch_flags
 
             for i, batch in enumerate(multimodal_batches):
+                batch_flags = {"rate_limited": False, "timed_out": False}
                 try:
-                    await process_multimodal_batch(batch)
+                    batch_flags = await process_multimodal_batch(batch)
                 except Exception as exc:
+                    batch_flags = self._handle_contextualizer_exception(exc)
                     self._logger.log(f"Image batch contextualization failed: {exc}", level="error")
+                await self._cooldown_after_batch(
+                    kind="image",
+                    batch_index=i,
+                    rate_limited=batch_flags["rate_limited"],
+                    timed_out=batch_flags["timed_out"],
+                )
 
         # Process text items (chunks, tables, equations) in batches
         if (text_items or other_artifacts) and self._llm is None:
@@ -227,8 +298,12 @@ class Contextualizer:
                         except Exception as exc:
                             results.append(exc)
 
+                batch_flags = {"rate_limited": False, "timed_out": False}
                 for (item, _payload), result_str in zip(batch_requests, results):
                     if isinstance(result_str, Exception):
+                        flags = self._handle_contextualizer_exception(result_str)
+                        batch_flags["rate_limited"] = batch_flags["rate_limited"] or flags["rate_limited"]
+                        batch_flags["timed_out"] = batch_flags["timed_out"] or flags["timed_out"]
                         self._logger.log(f"Failed to contextualize {item.id}: {result_str}", level="error")
                         if isinstance(item, ExtractedChunk):
                             item.contextualized_text = item.text
@@ -237,12 +312,21 @@ class Contextualizer:
                     else:
                         validated = self._validate_contextualized_text(result_str)
                         item.contextualized_text = validated or (item.text if isinstance(item, ExtractedChunk) else self._get_artifact_content(item))
+                return batch_flags
 
             for i, batch in enumerate(text_batches):
+                batch_flags = {"rate_limited": False, "timed_out": False}
                 try:
-                    await process_text_batch(batch)
+                    batch_flags = await process_text_batch(batch)
                 except Exception as exc:
+                    batch_flags = self._handle_contextualizer_exception(exc)
                     self._logger.log(f"Text batch contextualization failed: {exc}", level="error")
+                await self._cooldown_after_batch(
+                    kind="text",
+                    batch_index=i,
+                    rate_limited=batch_flags["rate_limited"],
+                    timed_out=batch_flags["timed_out"],
+                )
 
     def _create_batches(self, items: list, batch_size: int) -> list[list]:
         """Split items into batches of specified size."""
