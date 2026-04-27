@@ -230,8 +230,8 @@ litellm:
   default_group: "app"
   router:
     num_retries: 1
-    retry_after: 5
-    cooldown_time: 60
+    retry_after: 15
+    cooldown_time: 90
     enable_pre_call_checks: true
     timeout: 120
     routing_strategy: "least-busy"
