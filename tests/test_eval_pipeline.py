@@ -7,18 +7,30 @@ import unittest
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
+import sys
+
+from pypdf import PdfWriter
+from pydantic import BaseModel
 
 from eval.config import load_eval_config
 from eval.db import EvalDatabase
+from eval.pipeline.common import write_json_artifact
 from eval.pipeline.deck_views import build_deck_views
-from eval.pipeline.documents import build_documents, register_benchmark_tasks
+from eval.pipeline.documents import (
+    _default_document_processor,
+    build_documents,
+    download_documents,
+    process_documents,
+    register_benchmark_tasks,
+)
 from eval.pipeline.harness import run_harness
 from eval.pipeline.reports import run_reports
 
 
 class TestEvalPipeline(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmpdir.name)
         (self.root / "eval/metrics/benchmark/deck_bench/data").mkdir(parents=True, exist_ok=True)
         (self.root / "data").mkdir(parents=True, exist_ok=True)
@@ -32,7 +44,7 @@ class TestEvalPipeline(unittest.TestCase):
                     "conference": "ECCV",
                     "year": "2024",
                     "paper_url": str(self.root / "paper.pdf"),
-                    "slides_url": str(self.root / "reference.pptx"),
+                    "slides_url": str(self.root / "reference.pdf"),
                 }
             }
         }
@@ -40,8 +52,9 @@ class TestEvalPipeline(unittest.TestCase):
             json.dumps(manifest),
             encoding="utf-8",
         )
+        (self.root / "paper.pdf").write_bytes(b"%PDF-1.4\n% test paper\n")
         self._write_config()
-        self._write_fake_pptx(self.root / "reference.pptx", [["Ref title", "Ref bullet"]])
+        self._write_fake_pdf(self.root / "reference.pdf")
 
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
@@ -52,7 +65,15 @@ class TestEvalPipeline(unittest.TestCase):
 
         def fake_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
             captured.append(pdf_paths)
-            return object()
+            return SimpleNamespace(
+                processed_documents=[
+                    {
+                        "doc_id": "doc-1",
+                        "source_path": str(self.root / "paper.pdf"),
+                        "paper_title": "paper",
+                    }
+                ]
+            )
 
         processed_paths = build_documents(
             config=config,
@@ -68,14 +89,180 @@ class TestEvalPipeline(unittest.TestCase):
             self.assertEqual(tasks[0].task_id, "1041")
             self.assertEqual(tasks[0].suite_id, "eccv_2024")
             self.assertEqual(tasks[0].query, "Explain this paper to an audience of laypeople")
+            self.assertEqual(tasks[0].source_document_id, "doc-1")
+            self.assertEqual(tasks[0].source_document_paths, [str(self.root / "paper.pdf")])
+            self.assertEqual(tasks[0].raw_reference_deck_path, str(self.root / "reference.pdf"))
+
+    def test_download_documents_populates_local_paths_without_processing(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+
+        downloaded_paths = download_documents(config=config, benchmark_id="deck_bench")
+        self.assertEqual(downloaded_paths, [str(self.root / "paper.pdf")])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            tasks = db.list_tasks("deck_bench")
+            self.assertEqual(tasks[0].source_document_id, "1041")
+            self.assertEqual(tasks[0].source_document_paths, [str(self.root / "paper.pdf")])
+            self.assertEqual(tasks[0].raw_reference_deck_path, str(self.root / "reference.pdf"))
+
+    def test_process_documents_uses_downloaded_local_paths(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        download_documents(config=config, benchmark_id="deck_bench")
+        captured: list[list[str]] = []
+
+        def fake_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            captured.append(pdf_paths)
+            self._seed_processed_document("doc-1", self.root / "paper.pdf")
+            return SimpleNamespace(
+                processed_documents=[
+                    {
+                        "doc_id": "doc-1",
+                        "source_path": str(self.root / "paper.pdf"),
+                        "paper_title": "paper",
+                    }
+                ]
+            )
+
+        processed_paths = process_documents(config=config, benchmark_id="deck_bench", processor=fake_processor)
+        self.assertEqual(processed_paths, [str(self.root / "paper.pdf")])
+        self.assertEqual(captured, [[str(self.root / "paper.pdf")]])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            tasks = db.list_tasks("deck_bench")
+            self.assertEqual(tasks[0].source_document_id, "doc-1")
+            self.assertEqual(tasks[0].source_document_paths, [str(self.root / "paper.pdf")])
+
+    def test_process_documents_recovers_persisted_doc_when_runner_returns_none(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        download_documents(config=config, benchmark_id="deck_bench")
+
+        def fake_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            self._seed_processed_document("doc-1", self.root / "paper.pdf")
+            return SimpleNamespace(processed_documents=[])
+
+        processed_paths = process_documents(config=config, benchmark_id="deck_bench", processor=fake_processor)
+        self.assertEqual(processed_paths, [str(self.root / "paper.pdf")])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            tasks = db.list_tasks("deck_bench")
+            self.assertEqual(tasks[0].source_document_id, "doc-1")
+
+    def test_build_documents_skips_existing_processed_document_by_default(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+
+        def fake_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            self._seed_processed_document("doc-1", self.root / "paper.pdf")
+            return SimpleNamespace(
+                processed_documents=[
+                    {
+                        "doc_id": "doc-1",
+                        "source_path": str(self.root / "paper.pdf"),
+                        "paper_title": "paper",
+                    }
+                ]
+            )
+
+        first_paths = build_documents(config=config, benchmark_id="deck_bench", processor=fake_processor)
+        self.assertEqual(first_paths, [str(self.root / "paper.pdf")])
+
+        captured: list[list[str]] = []
+
+        def should_not_run(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            captured.append(pdf_paths)
+            return SimpleNamespace(processed_documents=[])
+
+        second_paths = build_documents(config=config, benchmark_id="deck_bench", processor=should_not_run)
+        self.assertEqual(second_paths, [])
+        self.assertEqual(captured, [])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            tasks = db.list_tasks("deck_bench")
+            self.assertEqual(tasks[0].source_document_id, "doc-1")
+            self.assertEqual(tasks[0].source_document_paths, [str(self.root / "paper.pdf")])
+
+    def test_build_documents_force_process_rebuilds_existing_document(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+
+        def first_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            self._seed_processed_document("doc-1", self.root / "paper.pdf")
+            return SimpleNamespace(
+                processed_documents=[
+                    {
+                        "doc_id": "doc-1",
+                        "source_path": str(self.root / "paper.pdf"),
+                        "paper_title": "paper",
+                    }
+                ]
+            )
+
+        build_documents(config=config, benchmark_id="deck_bench", processor=first_processor)
+
+        captured: list[list[str]] = []
+
+        def second_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            captured.append(pdf_paths)
+            self._seed_processed_document("doc-2", self.root / "paper.pdf")
+            return SimpleNamespace(
+                processed_documents=[
+                    {
+                        "doc_id": "doc-2",
+                        "source_path": str(self.root / "paper.pdf"),
+                        "paper_title": "paper-v2",
+                    }
+                ]
+            )
+
+        forced_paths = build_documents(
+            config=config,
+            benchmark_id="deck_bench",
+            processor=second_processor,
+            force_process=True,
+        )
+        self.assertEqual(forced_paths, [str(self.root / "paper.pdf")])
+        self.assertEqual(captured, [[str(self.root / "paper.pdf")]])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            tasks = db.list_tasks("deck_bench")
+            self.assertEqual(tasks[0].source_document_id, "doc-2")
+            self.assertEqual(tasks[0].metadata["paper_title"], "paper-v2")
+
+    def test_default_document_processor_keeps_contextualization_enabled(self) -> None:
+        mocked = Mock(return_value=SimpleNamespace(processed_documents=[]))
+        fake_module = SimpleNamespace(process_documents=mocked)
+        with patch.dict(sys.modules, {"eval.graph_runner": fake_module}):
+            _default_document_processor(["paper.pdf"], "eval/llm.config.yaml")
+
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(
+            mocked.call_args.kwargs,
+            {
+                "pdf_paths": ["paper.pdf"],
+                "llm_config_path": "eval/llm.config.yaml",
+                "database_path": None,
+            },
+        )
 
     def test_harness_persists_append_only_transcripts(self) -> None:
         config = load_eval_config(self.root / "config.yaml")
-        register_benchmark_tasks(config, "deck_bench")
+        def fake_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            return SimpleNamespace(
+                processed_documents=[
+                    {
+                        "doc_id": "doc-1",
+                        "source_path": str(self.root / "paper.pdf"),
+                        "paper_title": "paper",
+                    }
+                ]
+            )
+
+        build_documents(config, "deck_bench", processor=fake_processor)
         generated_pptx = self.root / "output/generated.pptx"
         self._write_fake_pptx(generated_pptx, [["Gen title", "Gen bullet"]])
 
-        def fake_runner(**_kwargs):
+        runner_calls: list[dict[str, object]] = []
+
+        def fake_runner(**kwargs):
+            runner_calls.append(kwargs)
             return SimpleNamespace(
                 session_id="sess-1",
                 status="success",
@@ -96,13 +283,59 @@ class TestEvalPipeline(unittest.TestCase):
             runner=fake_runner,
         )
         self.assertEqual(len(transcripts), 2)
+        self.assertEqual(runner_calls[0]["doc_ids"], ["doc-1"])
         with EvalDatabase(config.paths.eval_db) as db:
             stored = db.list_transcripts(benchmark_id="deck_bench")
             self.assertEqual(len(stored), 2)
 
-    def test_build_deck_views_extracts_generated_and_reference_views(self) -> None:
+    def test_harness_accepts_plain_dict_node_events(self) -> None:
         config = load_eval_config(self.root / "config.yaml")
         register_benchmark_tasks(config, "deck_bench")
+        generated_pptx = self.root / "output/generated.pptx"
+        self._write_fake_pptx(generated_pptx, [["Gen title", "Gen bullet"]])
+
+        def fake_runner(**_kwargs):
+            return SimpleNamespace(
+                session_id="sess-1",
+                status="success",
+                final_state={"review": {"export_ready": True}, "messages": []},
+                node_events=[{"node_name": "planner", "event_type": "end"}],
+                pptx_path=str(generated_pptx),
+                final_warnings=[],
+                error_text=None,
+            )
+
+        transcripts = run_harness(
+            config=config,
+            benchmark_id="deck_bench",
+            variant_id="v1",
+            graph_version="g1",
+            doc_pipeline_version="d1",
+            trial_count=1,
+            runner=fake_runner,
+        )
+
+        self.assertEqual(transcripts[0].status, "success")
+        self.assertIsNotNone(transcripts[0].node_events_artifact_path)
+        node_events_path = Path(transcripts[0].node_events_artifact_path or "")
+        self.assertTrue(node_events_path.exists())
+        payload = json.loads(node_events_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload, [{"node_name": "planner", "event_type": "end"}])
+
+    def test_build_deck_views_extracts_generated_and_reference_views(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        def fake_processor(pdf_paths: list[str], _llm_config_path: str | None) -> object:
+            return SimpleNamespace(
+                processed_documents=[
+                    {
+                        "doc_id": "doc-1",
+                        "source_path": str(self.root / "paper.pdf"),
+                        "paper_title": "paper",
+                    }
+                ]
+            )
+
+        build_documents(config, "deck_bench", processor=fake_processor)
         generated_pptx = self.root / "output/generated.pptx"
         self._write_fake_pptx(generated_pptx, [["Gen title", "Gen bullet"]])
 
@@ -122,7 +355,7 @@ class TestEvalPipeline(unittest.TestCase):
                     finished_at="later",
                     session_id="sess",
                     query="Explain this paper to an audience of laypeople",
-                    source_document_id="1041",
+                    source_document_id="doc-1",
                     final_deck_path=str(generated_pptx),
                     transcript_artifact_path=None,
                     final_state_artifact_path=None,
@@ -194,6 +427,17 @@ class TestEvalPipeline(unittest.TestCase):
         self.assertIn("deck_fidelity", content)
         self.assertIn("0.75", content)
 
+    def test_write_json_artifact_serializes_nested_pydantic_models(self) -> None:
+        class ExampleModel(BaseModel):
+            value: str
+
+        artifact_path = write_json_artifact(
+            self.root / "artifact.json",
+            {"outer": ExampleModel(value="ok")},
+        )
+        payload = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+        self.assertEqual(payload, {"outer": {"value": "ok"}})
+
     def _write_config(self) -> None:
         config_text = f"""
 llm_config: llm.config.yaml
@@ -226,6 +470,46 @@ benchmarks:
                     + "</p:sld>"
                 )
                 archive.writestr(f"ppt/slides/slide{index}.xml", slide_xml)
+
+    @staticmethod
+    def _write_fake_pdf(path: Path) -> None:
+        writer = PdfWriter()
+        writer.add_blank_page(width=612, height=792)
+        with path.open("wb") as handle:
+            writer.write(handle)
+
+    def _seed_processed_document(self, doc_id: str, source_path: Path) -> None:
+        conn = sqlite3.connect(self.research_db_path)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS documents (
+                    id TEXT PRIMARY KEY,
+                    source_path TEXT,
+                    filename TEXT,
+                    markdown TEXT,
+                    page_count INTEGER,
+                    content_hash TEXT,
+                    run_id TEXT,
+                    created_at TEXT,
+                    schema TEXT,
+                    paper_metadata TEXT,
+                    document_context TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO documents (
+                    id, source_path, filename, markdown, page_count, content_hash,
+                    run_id, created_at, schema, paper_metadata, document_context
+                ) VALUES (?, ?, ?, '', 1, '', '', '', '', '', '')
+                """,
+                (doc_id, str(source_path), source_path.name),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

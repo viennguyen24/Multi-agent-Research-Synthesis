@@ -5,6 +5,8 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
+from pypdf import PdfReader
+
 from eval.config import EvalConfig
 from eval.pipeline.common import init_eval_storage, utc_now, write_json_artifact
 from eval.schema import DeckView, DeckViewSlide, DeckViewTextBlock
@@ -65,7 +67,7 @@ def _persist_deck_view(
     transcript_id: str | None,
     extraction_version: str,
 ) -> DeckView:
-    slides = _extract_slides_from_pptx(source_path)
+    slides = _extract_slides(source_path)
     deck_view = DeckView(
         deck_view_id=str(uuid.uuid4()),
         source_kind=source_kind,
@@ -105,8 +107,14 @@ def _persist_deck_view(
     return deck_view
 
 
-def _extract_slides_from_pptx(source_path: str) -> list[DeckViewSlide]:
+def _extract_slides(source_path: str) -> list[DeckViewSlide]:
     path = Path(source_path).expanduser().resolve()
+    if path.suffix.lower() == ".pdf":
+        return _extract_slides_from_pdf(path)
+    return _extract_slides_from_pptx(path)
+
+
+def _extract_slides_from_pptx(path: Path) -> list[DeckViewSlide]:
     if not path.exists():
         raise FileNotFoundError(f"Deck file not found: {path}")
     slides: list[DeckViewSlide] = []
@@ -139,4 +147,32 @@ def _extract_slides_from_pptx(source_path: str) -> list[DeckViewSlide]:
                     combined_text=combined_text,
                 )
             )
+    return slides
+
+
+def _extract_slides_from_pdf(path: Path) -> list[DeckViewSlide]:
+    if not path.exists():
+        raise FileNotFoundError(f"Deck file not found: {path}")
+    reader = PdfReader(str(path))
+    slides: list[DeckViewSlide] = []
+    for slide_index, page in enumerate(reader.pages):
+        extracted_text = (page.extract_text() or "").strip()
+        text_blocks: list[DeckViewTextBlock] = []
+        if extracted_text:
+            for block_index, line in enumerate(line for line in extracted_text.splitlines() if line.strip()):
+                text_blocks.append(
+                    DeckViewTextBlock(
+                        block_index=block_index,
+                        text=line.strip(),
+                        provenance=f"{path.name}#page[{slide_index}]",
+                    )
+                )
+        slides.append(
+            DeckViewSlide(
+                slide_index=slide_index,
+                source_ref=f"{path.name}#page[{slide_index}]",
+                text_blocks=text_blocks,
+                combined_text="\n".join(block.text for block in text_blocks),
+            )
+        )
     return slides

@@ -10,11 +10,16 @@ from eval.pipeline.common import (
     utc_now,
     write_json_artifact,
 )
-from eval.pipeline.documents import register_benchmark_tasks
 from eval.schema import Task, Transcript
 
 
 RunnerCallable = Callable[..., Any]
+
+
+def _serialize_node_event(event: Any) -> Any:
+    if hasattr(event, "to_dict"):
+        return event.to_dict()
+    return event
 
 
 def run_harness(
@@ -28,7 +33,6 @@ def run_harness(
     task_ids: list[str] | None = None,
     runner: RunnerCallable | None = None,
 ) -> list[Transcript]:
-    register_benchmark_tasks(config, benchmark_id)
     with init_eval_storage(config) as db:
         tasks = db.list_tasks(benchmark_id=benchmark_id, suite_id=suite_id, task_ids=task_ids)
 
@@ -103,7 +107,7 @@ def _run_single_trial(
         )
         node_events_artifact_path = write_json_artifact(
             transcript_dir / "node_events.json",
-            [event.to_dict() for event in run_result.node_events],
+            [_serialize_node_event(event) for event in run_result.node_events],
         )
         debug_artifact_path = write_json_artifact(
             transcript_dir / "debug.json",

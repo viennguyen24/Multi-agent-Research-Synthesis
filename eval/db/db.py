@@ -337,6 +337,7 @@ class EvalDatabase:
             query=row["query"],
             source_document_id=row["source_document_id"],
             source_document_paths=json.loads(row["source_document_paths_json"]),
+            source_paper_url=json.loads(row["metadata_json"]).get("paper_url"),
             key_facts=json.loads(row["key_facts_json"]),
             raw_reference_deck_path=row["raw_reference_deck_path"],
             metadata=json.loads(row["metadata_json"]),

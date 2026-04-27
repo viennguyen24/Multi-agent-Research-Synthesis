@@ -50,6 +50,7 @@ class DocumentProcessResult:
     doc_ids: list[str]
     paper_titles: list[str]
     preprocessing_messages: list[str]
+    processed_documents: list[dict[str, str]]
 
 
 @dataclass(slots=True)
@@ -158,6 +159,8 @@ def process_documents(
     logging_enabled: bool = False,
     no_cache_control: bool = False,
     no_context_batching: bool = False,
+    disable_contextualization: bool = False,
+    disable_document_context: bool = False,
 ) -> DocumentProcessResult:
     logger = AgentLogger()
     session_id = str(uuid.uuid4())
@@ -169,6 +172,7 @@ def process_documents(
         doc_ids: list[str] = []
         paper_titles: list[str] = []
         preprocessing_messages: list[str] = []
+        processed_documents: list[dict[str, str]] = []
         seen_doc_ids: set[str] = set()
 
         for pdf_path_str in pdf_paths:
@@ -183,6 +187,8 @@ def process_documents(
                 embedder=embedder,
                 no_cache_control=no_cache_control,
                 no_context_batching=no_context_batching,
+                disable_contextualization=disable_contextualization,
+                disable_document_context=disable_document_context,
             )
             preprocessing_messages.append(message)
             if not artifacts:
@@ -192,10 +198,18 @@ def process_documents(
             seen_doc_ids.add(artifacts.doc_id)
             doc_ids.append(artifacts.doc_id)
             paper_titles.append(Path(artifacts.source_path).stem)
+            processed_documents.append(
+                {
+                    "doc_id": artifacts.doc_id,
+                    "source_path": str(artifacts.source_path),
+                    "paper_title": Path(artifacts.source_path).stem,
+                }
+            )
     return DocumentProcessResult(
         doc_ids=doc_ids,
         paper_titles=paper_titles,
         preprocessing_messages=preprocessing_messages,
+        processed_documents=processed_documents,
     )
 
 
@@ -210,6 +224,8 @@ def _process_document(
     embedder: Any,
     no_cache_control: bool,
     no_context_batching: bool,
+    disable_contextualization: bool,
+    disable_document_context: bool,
 ) -> tuple[Any, str]:
     pdf_path = Path(pdf_path_str)
     if not pdf_path.exists():
@@ -220,19 +236,23 @@ def _process_document(
     backend_name = _PROCESSOR_BACKEND_ALIASES[processor]
     chunker_name = _TEXT_SPLITTER_ALIASES[text_splitter]
     text_chunker = get_text_chunker(chunker_name) if chunker_name else None
-    contextualizer = Contextualizer(
-        config=ContextConfig(
-            model="context",
-            cache_control=not no_cache_control,
-            use_batch=not no_context_batching,
-        ),
-        object_store=object_store,
-        logger=logger,
-    )
-    document_contextualizer = DocumentContextualizer(
-        config=DocumentContextConfig(model="context"),
-        logger=logger,
-    )
+    contextualizer = None
+    if not disable_contextualization:
+        contextualizer = Contextualizer(
+            config=ContextConfig(
+                model="context",
+                cache_control=not no_cache_control,
+                use_batch=not no_context_batching,
+            ),
+            object_store=object_store,
+            logger=logger,
+        )
+    document_contextualizer = None
+    if not disable_document_context:
+        document_contextualizer = DocumentContextualizer(
+            config=DocumentContextConfig(model="context"),
+            logger=logger,
+        )
     processor_instance = DocProcessor(
         backend=backend_name,
         text_chunker=text_chunker,

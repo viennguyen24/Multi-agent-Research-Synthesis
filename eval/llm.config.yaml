@@ -1,24 +1,188 @@
 providers:
+  azure:
+    shared:
+      api_key: "os.environ/AZURE_API_KEY"
+      api_base: "os.environ/AZURE_API_BASE"
+      api_version: "os.environ/AZURE_API_VERSION"
+    models:
+      gpt-4o: {}
+
+  gemini:
+    shared:
+      api_key: "os.environ/GEMINI_API_KEY"
+    models:
+      gemini-3.1-flash-lite-preview: {}
+      gemini-3-flash-preview: {}
+      gemini-2.5-flash-lite: {}
+      gemini-2.5-pro: {}
+      gemini-2.5-flash: {}
+
+  nvidia_nim:
+    shared:
+      api_key: "os.environ/NVIDIA_NIM_API_KEY"
+      api_base: "os.environ/NVIDIA_NIM_BASE_URL"
+    models:
+      mistralai/mistral-large-3-675b-instruct-2512: {}
+      mistralai/mistral-medium-3-instruct: {}
+      vlm/google/paligemma: {}
+      google/gemma-3-27b-it: {}
+      microsoft/phi-3.5-vision-instruct: {}
+      microsoft/phi-4-multimodal-instruct: {}
+
   openrouter:
     shared:
       api_key: "os.environ/OPENROUTER_API_KEY"
       api_base: "os.environ/OPENROUTER_BASE_URL"
     models:
+      google/gemma-4-26b-a4b-it:free: {}
+      google/gemma-4-31b-it:free: {}
+      google/gemma-3-4b-it:free: {}
+      google/gemma-3-12b-it:free: {}
+      google/gemma-3-27b-it:free: {}
+      tencent/hy3-preview:free: {}
+      baidu/qianfan-ocr-fast:free: {}
+      nvidia/llama-nemotron-embed-vl-1b-v2:free: {}
+      nvidia/nemotron-nano-12b-v2-vl:free: {}
       openai/gpt-oss-120b:free: {}
+      openai/gpt-oss-20b:free: {}
+
+  ollama:
+    shared:
+      api_key: "os.environ/OLLAMA_API_KEY"
+      api_base: "os.environ/OLLAMA_BASE_URL"
+    models:
+      qwen3.5:397b-cloud: {}
+      gemma3:4b-cloud: {}
+      gemma3:12b-cloud: {}
+      gemma3:27b-cloud: {}
+      ministral-3:3b-cloud: {}
+      ministral-3:8b-cloud: {}
+      ministral-3:14b-cloud: {}
+      qwen3.5:397b-cloud: {}
+      gemma4:31b-cloud: {}
+      devstral-small-2:24b-cloud: {}
+      kimi-k2.5:cloud: {}
+      kimi-k2.6:cloud: {}
+      mistral-large-3:675b-cloud: {}
+      qwen3-vl:235b-instruct-cloud: {}
+      qwen3-vl:235b-cloud: {}
+      gemini-3-flash-preview:cloud: {}
 
 groups:
+  app:
+    models:
+      - "azure/gpt-4o"
+      - "gemini/gemini-3-flash-preview"
+      - "gemini/gemini-2.5-flash-lite"
+      - "gemini/gemini-2.5-flash"
+      - "nvidia_nim/mistralai/mistral-medium-3-instruct"
+      - "ollama/gemma3:12b-cloud"
+
+  planner:
+    models:
+      - "azure/gpt-4o"
+      - "nvidia_nim/mistralai/mistral-medium-3-instruct"
+
+  slides:
+    models:
+      - "azure/gpt-4o"
+      - "gemini/gemini-3-flash-preview"
+      - "gemini/gemini-2.5-flash-lite"
+      - "gemini/gemini-2.5-flash"
+      - "nvidia_nim/mistralai/mistral-medium-3-instruct"
+
+  critic:
+    models:
+      - "azure/gpt-4o"
+      - "nvidia_nim/mistralai/mistral-medium-3-instruct"
+      - "gemini/gemini-3-flash-preview"
+      - "gemini/gemini-2.5-flash-lite"
+
+  context:
+    models:
+      - "azure/gpt-4o"
+      - "gemini/gemini-3-flash-preview"
+      - "gemini/gemini-2.5-flash-lite"
+      - "gemini/gemini-2.5-flash"
+      - "nvidia_nim/mistralai/mistral-medium-3-instruct"
+      - "ollama/kimi-k2.6:cloud"
+      - "ollama/gemma4:31b-cloud"
+      - "ollama/qwen3.5:397b-cloud"
+      - "ollama/ministral-3:14b-cloud"
+      - "ollama/devstral-small-2:24b-cloud"
+      - "ollama/kimi-k2.5:cloud"
+      - "ollama/gemini-3-flash-preview:cloud"
+      - "ollama/mistral-large-3:675b-cloud"
+      - "ollama/gemma3:27b-cloud"
+      - "ollama/gemma3:12b-cloud"
+      - "ollama/gemma3:4b-cloud"
+
+  context-vision:
+    models:
+      - "gemini/gemini-2.5-flash"
+      - "gemini/gemini-2.5-flash-lite"
+      - "ollama/qwen3-vl:235b-instruct-cloud"
+      - "ollama/qwen3-vl:235b-cloud"
+      - "ollama/kimi-k2.6:cloud"
+      - "ollama/gemma4:31b-cloud"
+      - "ollama/qwen3.5:397b-cloud"
+      - "ollama/ministral-3:14b-cloud"
+      - "ollama/devstral-small-2:24b-cloud"
+      - "ollama/kimi-k2.5:cloud"
+      - "ollama/gemini-3-flash-preview:cloud"
+      - "ollama/mistral-large-3:675b-cloud"
+      - "ollama/gemma3:27b-cloud"
+      - "ollama/gemma3:12b-cloud"
+      - "ollama/gemma3:4b-cloud"
+
   evaluator:
     models:
+      - "azure/gpt-4o"
+      - "nvidia_nim/mistralai/mistral-medium-3-instruct"
+      - "gemini/gemini-3-flash-preview"
+      - "gemini/gemini-2.5-flash-lite"
+      - "ollama/gemma3:12b-cloud"
+      - "ollama/kimi-k2.6:cloud"
+      - "ollama/gemma4:31b-cloud"
+      - "ollama/qwen3.5:397b-cloud"
+      - "ollama/ministral-3:14b-cloud"
+      - "ollama/devstral-small-2:24b-cloud"
+      - "ollama/kimi-k2.5:cloud"
+      - "ollama/gemini-3-flash-preview:cloud"
+      - "ollama/mistral-large-3:675b-cloud"
+      - "ollama/gemma3:27b-cloud"
+      - "ollama/gemma3:4b-cloud"
+
+  supervisor:
+    models:
+      - "azure/gpt-4o"
+      - "nvidia_nim/mistralai/mistral-medium-3-instruct"
+      - "gemini/gemini-2.5-flash-lite"
+      - "gemini/gemini-3-flash-preview"
+
+  fallback:
+    models:
+      - "openrouter/google/gemma-4-26b-a4b-it:free"
+      - "openrouter/google/gemma-4-31b-it:free"
+      - "openrouter/google/gemma-3-4b-it:free"
+      - "openrouter/google/gemma-3-12b-it:free"
+      - "openrouter/google/gemma-3-27b-it:free"
       - "openrouter/openai/gpt-oss-120b:free"
-    fallbacks:
-      - "evaluator"
+      - "openrouter/openai/gpt-oss-20b:free"
+      - "ollama/qwen3.5:397b-cloud"
+      - "ollama/gemma3:27b-cloud"
+      - "ollama/gemma3:4b-cloud"
+      - "ollama/gemma3:12b-cloud"
+      - "ollama/qwen3-vl:235b-instruct-cloud"
+      - "ollama/qwen3-vl:235b-cloud"
+      - "ollama/gemini-3-flash-preview:cloud"
 
 litellm:
-  default_group: "evaluator"
+  default_group: "supervisor"
   router:
-    num_retries: 1
+    num_retries: 2
     retry_after: 5
-    cooldown_time: 60
+    cooldown_time: 30
     enable_pre_call_checks: true
     timeout: 120
-    routing_strategy: "least-busy"
+    routing_strategy: "usage-based-routing"

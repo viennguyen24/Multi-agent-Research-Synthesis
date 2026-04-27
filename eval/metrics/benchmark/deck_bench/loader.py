@@ -19,7 +19,7 @@ class DeckBenchLoader(BenchmarkLoader):
             payload = json.load(handle)
 
         tasks: list[Task] = []
-        raw_tasks = payload.get("tasks", {})
+        raw_tasks = payload.get("tasks", payload)
         for task_id, item in raw_tasks.items():
             conference = str(item["conference"]).strip()
             year = str(item["year"]).strip()
@@ -30,9 +30,10 @@ class DeckBenchLoader(BenchmarkLoader):
                     task_id=str(task_id),
                     query=DEFAULT_DECKBENCH_QUERY,
                     source_document_id=str(task_id),
-                    source_document_paths=[item["paper_url"]],
+                    source_document_paths=[],
+                    source_paper_url=item["paper_url"],
                     key_facts=[],
-                    raw_reference_deck_path=item["slides_url"],
+                    raw_reference_deck_path=None,
                     metadata={
                         "paper_id": str(task_id),
                         "conference": conference,

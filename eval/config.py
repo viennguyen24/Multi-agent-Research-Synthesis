@@ -17,6 +17,8 @@ class EvalPaths:
     metric_results_dir: Path
     reports_dir: Path
     runtime_dbs_dir: Path
+    source_docs_dir: Path
+    reference_decks_dir: Path
     llm_config_path: Path
 
 
@@ -55,6 +57,8 @@ def load_eval_config(config_path: str | Path) -> EvalConfig:
         metric_results_dir=_resolve_path(root_dir, artifacts.get("metric_results", "artifacts/metric_results")),
         reports_dir=_resolve_path(root_dir, artifacts.get("reports", "artifacts/reports")),
         runtime_dbs_dir=_resolve_path(root_dir, artifacts.get("runtime_dbs", "artifacts/runtime_dbs")),
+        source_docs_dir=_resolve_path(root_dir, artifacts.get("source_docs", "artifacts/source_docs")),
+        reference_decks_dir=_resolve_path(root_dir, artifacts.get("reference_decks", "artifacts/reference_decks")),
         llm_config_path=_resolve_path(root_dir, data.get("llm_config", "llm.config.yaml")),
     )
     benchmark_manifests = {
@@ -79,6 +83,8 @@ def ensure_eval_directories(config: EvalConfig) -> None:
         config.paths.metric_results_dir,
         config.paths.reports_dir,
         config.paths.runtime_dbs_dir,
+        config.paths.source_docs_dir,
+        config.paths.reference_decks_dir,
         config.output_dir,
     ):
         path.mkdir(parents=True, exist_ok=True)

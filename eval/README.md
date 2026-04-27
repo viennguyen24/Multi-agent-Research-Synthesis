@@ -67,6 +67,37 @@ Generate aggregate reports:
 python scripts/eval/run_reports.py --config eval/config.yaml --benchmark deck_bench
 ```
 
+## Tests
+
+Run tests from the repo root.
+
+In this checkout, the working interpreter is the project virtualenv Python:
+
+```bash
+./.venv/Scripts/python.exe -B -m unittest tests.test_eval_pipeline
+```
+
+Run one focused test:
+
+```bash
+./.venv/Scripts/python.exe -B -m unittest tests.test_eval_pipeline.TestEvalPipeline.test_register_and_build_documents_stage_isolated
+```
+
+Other useful focused slices:
+
+```bash
+./.venv/Scripts/python.exe -B -m unittest tests.test_eval_pipeline.TestEvalPipeline.test_harness_persists_append_only_transcripts
+./.venv/Scripts/python.exe -B -m unittest tests.test_eval_pipeline.TestEvalPipeline.test_harness_accepts_plain_dict_node_events
+./.venv/Scripts/python.exe -B -m unittest tests.test_eval_pipeline.TestEvalPipeline.test_build_deck_views_extracts_generated_and_reference_views
+./.venv/Scripts/python.exe -B -m unittest tests.test_eval_pipeline.TestEvalPipeline.test_write_json_artifact_serializes_nested_pydantic_models
+```
+
+If you only want a syntax check over the eval code without running the pipeline tests:
+
+```bash
+./.venv/Scripts/python.exe -m py_compile eval/config.py eval/schema.py eval/graph_runner.py eval/pipeline/common.py eval/pipeline/documents.py eval/pipeline/harness.py eval/pipeline/deck_views.py eval/pipeline/grader.py eval/pipeline/reports.py eval/metrics/benchmark/deck_bench/loader.py
+```
+
 ## DeckView Purpose
 
 `DeckView` is the thin metric-facing projection of a deck artifact.

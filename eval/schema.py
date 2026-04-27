@@ -16,6 +16,7 @@ class Task:
 
     source_document_id: str
     source_document_paths: list[str] = field(default_factory=list)
+    source_paper_url: str | None = None
     
     key_facts: list[str] = field(default_factory=list)
     raw_reference_deck_path: str | None = None

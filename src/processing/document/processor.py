@@ -153,11 +153,20 @@ class DocProcessor:
                 )
                 result = await self._contextualizer.contextualize(result)
                 self._logger.log("[DocProcessor] Contextualization finished", level="info")
+                if self._db:
+                    self._logger.log("[DocProcessor] Saving contextualized document checkpoint to DB…", level="info")
+                    self._db.save_document(result)
 
             if self._document_contextualizer:
                 self._logger.log("[DocProcessor] Generating document context…", level="info")
-                result = self._document_contextualizer.contextualize(result)
-                self._logger.log("[DocProcessor] Document context generation finished", level="info")
+                try:
+                    result = self._document_contextualizer.contextualize(result)
+                    self._logger.log("[DocProcessor] Document context generation finished", level="info")
+                except Exception as exc:
+                    self._logger.log(
+                        f"[DocProcessor] Document context generation failed; continuing without document_context: {exc}",
+                        level="warning",
+                    )
 
             if self._embedder is not None:
                 self._logger.log("[DocProcessor] Embedding chunks…", level="info")

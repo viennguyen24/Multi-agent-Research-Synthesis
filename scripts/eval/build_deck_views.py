@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from _bootstrap import bootstrap_project_root
 
+bootstrap_project_root()
 from eval.config import load_eval_config
 from eval.pipeline.deck_views import build_deck_views
 

@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 from eval.reports.base import BenchmarkLoader
 from eval.config import EvalConfig, ensure_eval_directories
 from eval.db import EvalDatabase
@@ -29,13 +31,24 @@ def init_eval_storage(config: EvalConfig) -> EvalDatabase:
     return EvalDatabase(config.paths.eval_db)
 
 
+def _to_jsonable(payload: Any) -> Any:
+    if is_dataclass(payload):
+        return _to_jsonable(asdict(payload))
+    if isinstance(payload, BaseModel):
+        return _to_jsonable(payload.model_dump(mode="json"))
+    if hasattr(payload, "to_dict"):
+        return _to_jsonable(payload.to_dict())
+    if isinstance(payload, dict):
+        return {str(key): _to_jsonable(value) for key, value in payload.items()}
+    if isinstance(payload, (list, tuple)):
+        return [_to_jsonable(value) for value in payload]
+    return payload
+
+
 def write_json_artifact(output_path: str | Path, payload: Any) -> str:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if is_dataclass(payload):
-        serializable = asdict(payload)
-    else:
-        serializable = payload
+    serializable = _to_jsonable(payload)
     path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
     return str(path)
 
