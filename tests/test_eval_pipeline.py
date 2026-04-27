@@ -7,13 +7,17 @@ import unittest
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from eval.config import load_eval_config
 from eval.db import EvalDatabase
+from eval.metrics.benchmark.presentbench.metric_suite import PresentBenchMetricSuite
 from eval.pipeline.deck_views import build_deck_views
 from eval.pipeline.documents import build_documents, register_benchmark_tasks
+from eval.pipeline.grader import run_grader
 from eval.pipeline.harness import run_harness
 from eval.pipeline.reports import run_reports
+from eval.schema import MetricResult, Task, Transcript
 
 
 class TestEvalPipeline(unittest.TestCase):
@@ -68,6 +72,78 @@ class TestEvalPipeline(unittest.TestCase):
             self.assertEqual(tasks[0].task_id, "1041")
             self.assertEqual(tasks[0].suite_id, "eccv_2024")
             self.assertEqual(tasks[0].query, "Explain this paper to an audience of laypeople")
+
+    def test_register_presentbench_tasks_uses_thin_manifest_and_unique_material_aliases(self) -> None:
+        (self.root / "eval/metrics/benchmark/presentbench/data/academia/ICLR_2025/paper_one/generation_task").mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        (self.root / "eval/metrics/benchmark/presentbench/data/academia/NeurIPS_2024/paper_two/generation_task").mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        common_prompt = {
+            "material_independent_prefix": "MI: ",
+            "material_dependent_prefix": "MD: ",
+            "material_independent_checklist_1": ["Question A"],
+            "material_independent_checklist_2": ["Question B"],
+            "material_dependent_checklist_1": ["Question C"],
+            "material_dependent_checklist_2": ["Question D"],
+            "material_dependent_checklist_3": ["Question E"],
+        }
+        weights = {
+            "material_independent": {"1": 20.0, "2": 20.0},
+            "material_dependent": {"1": 20.0, "2": 20.0, "3": 20.0},
+        }
+        manifest = {
+            "dataset_root": "eval/metrics/benchmark/presentbench/data/academia",
+            "cases": [
+                "ICLR_2025/paper_one",
+                "NeurIPS_2024/paper_two",
+            ],
+        }
+
+        dataset_root = self.root / "eval/metrics/benchmark/presentbench/data/academia"
+        (dataset_root / "common_judge_prompt.json").write_text(json.dumps(common_prompt), encoding="utf-8")
+        (dataset_root / "judge_weights.yaml").write_text(
+            "material_independent:\n  '1': 20.0\n  '2': 20.0\nmaterial_dependent:\n  '1': 20.0\n  '2': 20.0\n  '3': 20.0\n",
+            encoding="utf-8",
+        )
+        (self.root / "eval/metrics/benchmark/presentbench/data/tasks.json").write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+        del weights
+
+        for relative_case in manifest["cases"]:
+            case_root = dataset_root / relative_case
+            (case_root / "material.pdf").write_bytes(b"%PDF-1.4\n%stub\n")
+            (case_root / "generation_task/instructions.md").write_text(
+                f"Create a technical deck for {case_root.name}.",
+                encoding="utf-8",
+            )
+            (case_root / "generation_task/judge_prompt.json").write_text(
+                json.dumps({"material_dependent_checklist_3": ["Per-slide fidelity question"]}),
+                encoding="utf-8",
+            )
+
+        config = load_eval_config(self.root / "config.yaml")
+        tasks = register_benchmark_tasks(config, "presentbench")
+
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(tasks[0].benchmark_id, "presentbench")
+        self.assertEqual(tasks[0].suite_id, "iclr_2025")
+        self.assertEqual(tasks[0].task_id, "paper_one")
+        self.assertEqual(tasks[0].query, "Create a technical deck for paper_one.")
+        self.assertEqual(tasks[1].suite_id, "neurips_2024")
+        self.assertNotEqual(tasks[0].source_document_id, tasks[1].source_document_id)
+        self.assertTrue(tasks[0].source_document_paths[0].endswith(".pdf"))
+        self.assertTrue(Path(tasks[0].source_document_paths[0]).exists())
+        self.assertEqual(
+            tasks[0].metadata["judge_prompt_path"],
+            str(dataset_root / "ICLR_2025/paper_one/generation_task/judge_prompt.json"),
+        )
 
     def test_harness_persists_append_only_transcripts(self) -> None:
         config = load_eval_config(self.root / "config.yaml")
@@ -194,6 +270,195 @@ class TestEvalPipeline(unittest.TestCase):
         self.assertIn("deck_fidelity", content)
         self.assertIn("0.75", content)
 
+    def test_run_grader_presentbench_does_not_require_deck_views(self) -> None:
+        config = load_eval_config(self.root / "config.yaml")
+        task = Task(
+            benchmark_id="presentbench",
+            suite_id="iclr_2025",
+            task_id="paper_one",
+            query="Create a technical deck.",
+            source_document_id="iclr_2025__paper_one",
+            source_document_paths=[str(self.root / "paper_one.pdf")],
+            metadata={
+                "material_path": str(self.root / "paper_one.pdf"),
+                "judge_prompt_path": str(self.root / "judge_prompt.json"),
+                "common_judge_prompt_path": str(self.root / "common_judge_prompt.json"),
+                "weights_path": str(self.root / "judge_weights.yaml"),
+            },
+        )
+        transcript = Transcript(
+            transcript_id="tx-presentbench",
+            benchmark_id="presentbench",
+            suite_id="iclr_2025",
+            task_id="paper_one",
+            trial_index=0,
+            variant_id="baseline",
+            graph_version="g1",
+            doc_pipeline_version="d1",
+            status="success",
+            created_at="now",
+            finished_at="later",
+            session_id="sess-1",
+            query=task.query,
+            source_document_id=task.source_document_id,
+            final_deck_path=str(self.root / "candidate.pptx"),
+        )
+        self._write_fake_pptx(Path(transcript.final_deck_path), [["Title", "Bullet"]])
+
+        with EvalDatabase(config.paths.eval_db) as db:
+            db.register_task(task, "now")
+            db.insert_transcript(transcript, "now")
+
+        fake_results = [
+            MetricResult(
+                metric_result_id="mr-overall",
+                transcript_id=transcript.transcript_id,
+                suite_id=transcript.suite_id,
+                trial_index=transcript.trial_index,
+                variant_id=transcript.variant_id,
+                graph_version=transcript.graph_version,
+                doc_pipeline_version=transcript.doc_pipeline_version,
+                benchmark_id=transcript.benchmark_id,
+                metric_id="presentbench_overall",
+                grader_id="presentbench_v1",
+                subject_type="generated_deck",
+                subject_id=transcript.transcript_id,
+                status="success",
+                scalar_value=75.0,
+                artifact_path=None,
+                metadata={},
+            )
+        ]
+
+        fake_research_db = SimpleNamespace(
+            load_document=lambda _doc_id: SimpleNamespace(markdown="Paper background", source_chunks=[]),
+            close=lambda: None,
+        )
+
+        with mock.patch(
+            "eval.metrics.benchmark.presentbench.metric_suite.PresentBenchMetricSuite.grade_transcript",
+            return_value=fake_results,
+        ) as mocked_grade:
+            written = run_grader(
+                config,
+                "presentbench",
+                research_db_factory=lambda _path: fake_research_db,
+            )
+
+        self.assertEqual(written, 1)
+        self.assertEqual(mocked_grade.call_count, 1)
+        with EvalDatabase(config.paths.eval_db) as db:
+            metric_rows = db.list_metric_results(benchmark_id="presentbench")
+            self.assertEqual(len(metric_rows), 1)
+            self.assertEqual(metric_rows[0]["metric_id"], "presentbench_overall")
+
+    def test_presentbench_metric_suite_returns_six_aggregate_metrics_and_verdict_artifact(self) -> None:
+        case_root = self.root / "academia/ICLR_2025/paper_one"
+        (case_root / "generation_task").mkdir(parents=True, exist_ok=True)
+        (case_root / "material.pdf").write_bytes(b"%PDF-1.4\n%stub\n")
+        self._write_fake_pptx(self.root / "candidate.pptx", [["Title", "Bullet"]])
+
+        common_prompt = {
+            "material_independent_prefix": "MI: ",
+            "material_dependent_prefix": "MD: ",
+            "material_independent_checklist_1": ["Fundamentals question"],
+            "material_independent_checklist_2": ["Visual question"],
+            "material_dependent_checklist_1": ["Completeness question"],
+            "material_dependent_checklist_2": ["Correctness question"],
+            "material_dependent_checklist_3": ["Fidelity question 1", "Fidelity question 2"],
+        }
+        (case_root.parent.parent / "common_judge_prompt.json").write_text(
+            json.dumps(common_prompt),
+            encoding="utf-8",
+        )
+        (case_root.parent.parent / "judge_weights.yaml").write_text(
+            "material_independent:\n  '1': 20.0\n  '2': 20.0\nmaterial_dependent:\n  '1': 20.0\n  '2': 20.0\n  '3': 20.0\n",
+            encoding="utf-8",
+        )
+        (case_root / "generation_task/judge_prompt.json").write_text("{}", encoding="utf-8")
+
+        task = Task(
+            benchmark_id="presentbench",
+            suite_id="iclr_2025",
+            task_id="paper_one",
+            query="Create a technical deck.",
+            source_document_id="iclr_2025__paper_one",
+            source_document_paths=[str(case_root / "material.pdf")],
+            metadata={
+                "material_path": str(case_root / "material.pdf"),
+                "judge_prompt_path": str(case_root / "generation_task/judge_prompt.json"),
+                "common_judge_prompt_path": str(case_root.parent.parent / "common_judge_prompt.json"),
+                "weights_path": str(case_root.parent.parent / "judge_weights.yaml"),
+            },
+        )
+        transcript = Transcript(
+            transcript_id="tx-1",
+            benchmark_id="presentbench",
+            suite_id="iclr_2025",
+            task_id="paper_one",
+            trial_index=0,
+            variant_id="baseline",
+            graph_version="g1",
+            doc_pipeline_version="d1",
+            status="success",
+            created_at="now",
+            finished_at="later",
+            session_id="sess-1",
+            query=task.query,
+            source_document_id=task.source_document_id,
+            final_deck_path=str(self.root / "candidate.pptx"),
+        )
+
+        answers = {
+            "MI: Fundamentals question": ("yes", "good progression"),
+            "MI: Visual question": ("no", "layout is crowded"),
+            "MD: Completeness question": ("yes", "main findings covered"),
+            "MD: Correctness question": ("no", "one claim is unsupported"),
+            "MD: Fidelity question 1": ("yes", "aligned to slide 1"),
+        }
+
+        suite = PresentBenchMetricSuite(
+            llm_config_path=None,
+            secondary_output_dir=self.root / "artifacts/metric_results",
+            judge_runner=lambda prompt_text, _payload: answers[prompt_text],
+        )
+        results = suite.grade_transcript(
+            transcript=transcript,
+            task=task,
+            candidate_deck_path=Path(transcript.final_deck_path),
+            source_text="Paper background text",
+        )
+
+        metric_ids = {result.metric_id for result in results}
+        self.assertEqual(
+            metric_ids,
+            {
+                "presentation_fundamentals",
+                "visual_design_and_layout",
+                "content_completeness",
+                "content_correctness",
+                "content_fidelity",
+                "presentbench_overall",
+            },
+        )
+        score_by_metric = {result.metric_id: result.scalar_value for result in results}
+        self.assertEqual(score_by_metric["presentation_fundamentals"], 100.0)
+        self.assertEqual(score_by_metric["visual_design_and_layout"], 0.0)
+        self.assertEqual(score_by_metric["content_completeness"], 100.0)
+        self.assertEqual(score_by_metric["content_correctness"], 0.0)
+        self.assertEqual(score_by_metric["content_fidelity"], 100.0)
+        self.assertEqual(score_by_metric["presentbench_overall"], 60.0)
+
+        overall = next(result for result in results if result.metric_id == "presentbench_overall")
+        self.assertTrue(overall.artifact_path)
+        verdict_dump = json.loads(Path(overall.artifact_path).read_text(encoding="utf-8"))
+        self.assertIn("material_independent", verdict_dump)
+        self.assertEqual(
+            verdict_dump["material_dependent"]["3"]["3.1"]["answer"],
+            "yes",
+        )
+        self.assertNotIn("3.2", verdict_dump["material_dependent"]["3"])
+
     def _write_config(self) -> None:
         config_text = f"""
 llm_config: llm.config.yaml
@@ -211,6 +476,7 @@ runtime:
   output_dir: output
 benchmarks:
   deck_bench: eval/metrics/benchmark/deck_bench/data/tasks.json
+  presentbench: eval/metrics/benchmark/presentbench/data/tasks.json
 """
         (self.root / "config.yaml").write_text(config_text.strip() + "\n", encoding="utf-8")
         (self.root / "llm.config.yaml").write_text("groups: {}\nproviders: {}\nlitellm: {}\n", encoding="utf-8")
